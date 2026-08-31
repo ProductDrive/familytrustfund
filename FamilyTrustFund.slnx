@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/FamilyTrustFund.Api/FamilyTrustFund.Api.csproj" />
+    <Project Path="src/FamilyTrustFund.AppHost/FamilyTrustFund.AppHost.csproj" />
+    <Project Path="src/FamilyTrustFund.Application/FamilyTrustFund.Application.csproj" />
+    <Project Path="src/FamilyTrustFund.Domain/FamilyTrustFund.Domain.csproj" />
+    <Project Path="src/FamilyTrustFund.Infrastructure/FamilyTrustFund.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/FamilyTrustFund.Tests/FamilyTrustFund.Tests.csproj" />
+  </Folder>
+</Solution>
