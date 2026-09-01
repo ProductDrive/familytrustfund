@@ -173,7 +173,8 @@ public class LoanService
             guarantorId,
             request.ApprovedAmount,
             request.ApprovedFrequency,
-            totalRepayable);
+            totalRepayable,
+            request.RepaymentTerm ?? 4);
 
         await _auditLog.RecordAsync(guarantorId, "Loan.Approved", "Loan", loan.Id,
             $"ApprovedAmount={request.ApprovedAmount}, Frequency={request.ApprovedFrequency}, TotalRepayable={totalRepayable}", ct);
@@ -227,7 +228,7 @@ public class LoanService
     }
 
     /// <summary>
-    /// Returns all loans for a fund. Ownership is enforced by the caller.
+    /// Returns the pending loan requests for a fund. Ownership is enforced by the caller.
     /// </summary>
     public async Task<IReadOnlyList<LoanDto>> GetLoansByFundAsync(
         Guid fundId,
@@ -235,6 +236,30 @@ public class LoanService
     {
         var items = await _loanRepository.GetByFundAsync(fundId, ct);
         return items.Select(i => ToLoanDto(i.Loan, i.FundName, i.MemberDisplayName, i.MemberEmail)).ToList();
+    }
+
+    /// <summary>
+    /// Returns a single loan only if the specified Guarantor owns the loan's fund.
+    /// Returns null otherwise (ownership-scoped lookup).
+    /// </summary>
+    public async Task<LoanDto?> GetLoanByIdForGuarantorAsync(
+        Guid guarantorId,
+        Guid loanId,
+        CancellationToken ct = default)
+    {
+        var loan = await _loanRepository.GetByIdAsync(loanId, ct);
+        if (loan is null)
+        {
+            return null;
+        }
+
+        var fund = await _fundRepository.GetByIdAsync(loan.FundId, ct);
+        if (fund is null || fund.GuarantorId != guarantorId)
+        {
+            return null;
+        }
+
+        return ToLoanDto(loan, fund);
     }
 
     /// <summary>
@@ -330,6 +355,7 @@ public class LoanService
         InterestRate = loan.InterestRate,
         RequestedFrequency = loan.RequestedFrequency,
         ApprovedFrequency = loan.ApprovedFrequency,
+        RepaymentTerm = loan.RepaymentTerm,
         Status = loan.Status,
         FundingSource = loan.FundingSource,
         OutstandingBalance = loan.OutstandingBalance,
@@ -354,6 +380,7 @@ public class LoanService
         InterestRate = loan.InterestRate,
         RequestedFrequency = loan.RequestedFrequency,
         ApprovedFrequency = loan.ApprovedFrequency,
+        RepaymentTerm = loan.RepaymentTerm,
         Status = loan.Status,
         FundingSource = loan.FundingSource,
         OutstandingBalance = loan.OutstandingBalance,

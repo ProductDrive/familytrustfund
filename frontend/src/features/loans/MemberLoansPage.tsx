@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import { HandCoins, CircleDollarSign } from 'lucide-react'
 import { useMyMemberships } from '../membership/membershipApi'
 import { useMyLoans, useRequestLoan } from './loanApi'
+import { useMyLoanDisbursement } from '../payments/paymentApi'
+import { MemberBankDetails } from '../payments/MemberBankDetails'
 import { PageHeader } from '../../components/ui/PageHeader'
 import { Card } from '../../components/ui/Card'
 import { StatusBadge } from '../../components/ui/Badge'
@@ -11,6 +13,13 @@ import { EmptyState, SkeletonCard } from '../../components/ui/State'
 import { MoneyDisplay } from '../../lib/money'
 
 const FREQUENCIES = ['Weekly', 'Biweekly', 'Monthly'] as const
+
+function DisbursementCell({ loanId }: { loanId: string }) {
+  const { data: disbursement, isLoading } = useMyLoanDisbursement(loanId)
+  if (isLoading) return <span className="cell-secondary">…</span>
+  if (!disbursement) return <span className="cell-secondary">—</span>
+  return <StatusBadge status={disbursement.status} withDot />
+}
 
 function LoanRequestForm({ onDone }: { onDone: () => void }) {
   const requestLoan = useRequestLoan()
@@ -143,6 +152,10 @@ export function MemberLoansPage() {
       {isLoading && <SkeletonCard />}
       {error && <p className="error-text">{(error as Error).message}</p>}
 
+      <div style={{ marginBottom: 20 }}>
+        <MemberBankDetails />
+      </div>
+
       {showForm && (
         <div style={{ marginBottom: 16 }}>
           <LoanRequestForm onDone={() => setShowForm(false)} />
@@ -161,6 +174,7 @@ export function MemberLoansPage() {
                 <th>Amount</th>
                 <th>Frequency</th>
                 <th>Status</th>
+                <th>Disbursement</th>
                 <th>Requested</th>
               </tr>
             </thead>
@@ -181,6 +195,9 @@ export function MemberLoansPage() {
                   <td>{l.approvedFrequency ?? l.requestedFrequency}</td>
                   <td>
                     <StatusBadge status={l.status} withDot />
+                  </td>
+                  <td>
+                    <DisbursementCell loanId={l.id} />
                   </td>
                   <td className="cell-secondary">
                     {new Date(l.requestedAtUtc).toLocaleDateString()}

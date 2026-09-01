@@ -8,6 +8,8 @@ import { MemberLoansPage } from './features/loans/MemberLoansPage'
 import { GuarantorLoansPage } from './features/loans/GuarantorLoansPage'
 import { MemberContributionsPage } from './features/contributions/MemberContributionsPage'
 import { GuarantorContributionsPage } from './features/contributions/GuarantorContributionsPage'
+import { GuarantorDisbursePage } from './features/payments/GuarantorDisbursePage'
+import { MemberRepaymentPage } from './features/repayments/MemberRepaymentPage'
 import { AdminMembershipsPage } from './features/administration/AdminMembershipsPage'
 import { NotAuthorizedPage } from './routes/NotAuthorizedPage'
 import { LoadingState } from './components/ui/State'
@@ -60,6 +62,14 @@ export default function App() {
             }
           />
           <Route
+            path="repayments"
+            element={
+              <RequireRole roles={['Member']}>
+                <MemberRepaymentPage />
+              </RequireRole>
+            }
+          />
+          <Route
             path="contributions"
             element={
               <RequireRole roles={['Member']}>
@@ -80,6 +90,14 @@ export default function App() {
             element={
               <RequireRole roles={['Guarantor']}>
                 <GuarantorContributionsPage />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="guarantor/disburse"
+            element={
+              <RequireRole roles={['Guarantor']}>
+                <GuarantorDisbursePage />
               </RequireRole>
             }
           />

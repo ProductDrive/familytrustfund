@@ -3,10 +3,14 @@ using FamilyTrustFund.Application.Contributions;
 using FamilyTrustFund.Application.Funds;
 using FamilyTrustFund.Application.Loans;
 using FamilyTrustFund.Application.Membership;
+using FamilyTrustFund.Application.Payments;
+using FamilyTrustFund.Application.Repayments;
 using FamilyTrustFund.Domain.Contributions;
 using FamilyTrustFund.Domain.Funds;
 using FamilyTrustFund.Domain.Loans;
 using FamilyTrustFund.Domain.Membership;
+using FamilyTrustFund.Domain.Payments;
+using FamilyTrustFund.Domain.Repayments;
 
 namespace FamilyTrustFund.Tests.Support;
 
@@ -255,6 +259,131 @@ public sealed class FakeContributionRepository : IContributionRepository
         Task.FromResult(ActiveLoans.Contains((memberId, fundId)));
 
     public void Add(FundContribution contribution) => Contributions.Add(contribution);
+
+    public Task SaveChangesAsync(CancellationToken ct = default) => Task.CompletedTask;
+}
+
+public sealed class FakePaymentRepository : IPaymentRepository
+{
+    public List<PaymentRecipient> Recipients { get; } = new();
+    public List<DisbursementTransaction> Transactions { get; } = new();
+
+    public Task<PaymentRecipient?> GetByIdAsync(Guid id, CancellationToken ct = default) =>
+        Task.FromResult(Recipients.FirstOrDefault(r => r.Id == id));
+
+    public Task<PaymentRecipient?> GetActiveRecipientForMemberAsync(
+        Guid memberId,
+        CancellationToken ct = default) =>
+        Task.FromResult(Recipients
+            .Where(r => r.MemberId == memberId && r.IsActive)
+            .OrderByDescending(r => r.CreatedAtUtc)
+            .FirstOrDefault());
+
+    public Task<PaymentRecipient?> GetLatestRecipientForMemberAsync(
+        Guid memberId,
+        CancellationToken ct = default) =>
+        Task.FromResult(Recipients
+            .Where(r => r.MemberId == memberId)
+            .OrderByDescending(r => r.CreatedAtUtc)
+            .FirstOrDefault());
+
+    public Task<IReadOnlyList<PaymentRecipient>> GetRecipientsByMemberAsync(
+        Guid memberId,
+        CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<PaymentRecipient>>(
+            Recipients.Where(r => r.MemberId == memberId).ToList());
+
+    public Task<DisbursementTransaction?> GetByLoanAsync(Guid loanId, CancellationToken ct = default) =>
+        Task.FromResult(Transactions.FirstOrDefault(t => t.LoanId == loanId));
+
+    public Task<DisbursementTransaction?> GetByIdempotencyKeyAsync(
+        string idempotencyKey,
+        CancellationToken ct = default) =>
+        Task.FromResult(Transactions.FirstOrDefault(t => t.IdempotencyKey == idempotencyKey));
+
+    public Task<DisbursementTransaction?> GetByProviderReferenceAsync(
+        string providerReference,
+        CancellationToken ct = default) =>
+        Task.FromResult(Transactions.FirstOrDefault(t => t.ProviderReference == providerReference));
+
+    public Task<bool> HasProcessedEventAsync(string eventId, CancellationToken ct = default) =>
+        Task.FromResult(Transactions.Any(t => t.LastProcessedEventId == eventId));
+
+    public void AddRecipient(PaymentRecipient recipient) => Recipients.Add(recipient);
+
+    public void AddDisbursement(DisbursementTransaction transaction) => Transactions.Add(transaction);
+
+    public Task SaveChangesAsync(CancellationToken ct = default) => Task.CompletedTask;
+}
+
+public sealed class FakePaymentProvider : IPaymentProvider
+{
+    public string Name { get; set; } = "Paystack";
+    public string RecipientCode { get; set; } = "RCP_abc123";
+    public string TransferReference { get; set; } = "TRF_xyz789";
+    public bool RecipientFail { get; set; }
+    public bool TransferFail { get; set; }
+
+    public Task<PaymentProviderResult> CreateRecipientAsync(
+        CreateRecipientRequest request,
+        CancellationToken ct = default) =>
+        Task.FromResult(RecipientFail
+            ? PaymentProviderResult.Fail("Recipient verification failed.")
+            : PaymentProviderResult.Ok(RecipientCode));
+
+    public Task<PaymentProviderResult> InitiateTransferAsync(
+        InitiateTransferRequest request,
+        CancellationToken ct = default) =>
+        Task.FromResult(TransferFail
+            ? PaymentProviderResult.Fail("Transfer initiation failed.")
+            : PaymentProviderResult.Ok(TransferReference));
+}
+
+public sealed class FakePaymentProviderRegistry : IPaymentProviderRegistry
+{
+    public Dictionary<string, IPaymentProvider> ByName { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public IPaymentProvider? Get(string providerName) =>
+        ByName.TryGetValue(providerName, out var provider) ? provider : null;
+}
+
+public sealed class FakeRepaymentRepository : IRepaymentRepository
+{
+    public List<Loan> Loans { get; } = new();
+    public List<LoanSchedule> Schedules { get; } = new();
+    public List<Repayment> Repayments { get; } = new();
+
+    public Task<Loan?> GetLoanAsync(Guid loanId, CancellationToken ct = default) =>
+        Task.FromResult(Loans.FirstOrDefault(l => l.Id == loanId));
+
+    public Task<LoanSchedule?> GetCurrentScheduleAsync(Guid loanId, CancellationToken ct = default) =>
+        Task.FromResult(Schedules
+            .Where(s => s.LoanId == loanId)
+            .OrderByDescending(s => s.Version)
+            .FirstOrDefault());
+
+    public Task<IReadOnlyList<LoanSchedule>> GetAllSchedulesAsync(Guid loanId, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<LoanSchedule>>(
+            Schedules.Where(s => s.LoanId == loanId).OrderBy(s => s.Version).ToList());
+
+    public Task<LoanScheduleItem?> GetItemAsync(Guid itemId, CancellationToken ct = default) =>
+        Task.FromResult(Schedules.SelectMany(s => s.Items).FirstOrDefault(i => i.Id == itemId));
+
+    public Task<IReadOnlyList<Repayment>> GetRepaymentsAsync(Guid loanId, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<Repayment>>(
+            Repayments.Where(r => r.LoanId == loanId).ToList());
+
+    public Task AddAsync(LoanSchedule schedule, CancellationToken ct = default)
+    {
+        Schedules.Add(schedule);
+        return Task.CompletedTask;
+    }
+
+    public Task AddAsync(Repayment repayment, CancellationToken ct = default)
+    {
+        Repayments.Add(repayment);
+        return Task.CompletedTask;
+    }
 
     public Task SaveChangesAsync(CancellationToken ct = default) => Task.CompletedTask;
 }

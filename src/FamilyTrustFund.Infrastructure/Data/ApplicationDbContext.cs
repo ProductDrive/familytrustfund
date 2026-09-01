@@ -2,6 +2,8 @@ using FamilyTrustFund.Domain.Contributions;
 using FamilyTrustFund.Domain.Funds;
 using FamilyTrustFund.Domain.Loans;
 using FamilyTrustFund.Domain.Membership;
+using FamilyTrustFund.Domain.Payments;
+using FamilyTrustFund.Domain.Repayments;
 using FamilyTrustFund.Infrastructure.Audit;
 using FamilyTrustFund.Infrastructure.Identity;
 using Microsoft.AspNetCore.Identity;
@@ -29,6 +31,11 @@ public class ApplicationDbContext : IdentityDbContext<
     public DbSet<FundMember> FundMembers => Set<FundMember>();
     public DbSet<Loan> Loans => Set<Loan>();
     public DbSet<FundContribution> FundContributions => Set<FundContribution>();
+    public DbSet<PaymentRecipient> PaymentRecipients => Set<PaymentRecipient>();
+    public DbSet<DisbursementTransaction> DisbursementTransactions => Set<DisbursementTransaction>();
+    public DbSet<LoanSchedule> LoanSchedules => Set<LoanSchedule>();
+    public DbSet<LoanScheduleItem> LoanScheduleItems => Set<LoanScheduleItem>();
+    public DbSet<Repayment> Repayments => Set<Repayment>();
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
 
     protected override void OnModelCreating(ModelBuilder builder)

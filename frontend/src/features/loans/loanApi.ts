@@ -26,6 +26,7 @@ export interface Loan {
   interestRate: number
   requestedFrequency: RepaymentFrequency
   approvedFrequency: RepaymentFrequency | null
+  repaymentTerm: number
   status: LoanStatus
   fundingSource: LoanFundingSource
   outstandingBalance: number
@@ -57,6 +58,7 @@ export interface ApproveLoanInput {
   loanId: string
   approvedAmount: number
   approvedFrequency: RepaymentFrequency
+  repaymentTerm?: number
 }
 
 export interface RejectLoanInput {

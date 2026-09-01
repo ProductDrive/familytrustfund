@@ -39,6 +39,10 @@ public class LoanConfiguration : IEntityTypeConfiguration<Loan>
         builder.Property(l => l.ApprovedFrequency)
             .HasConversion<int>();
 
+        builder.Property(l => l.RepaymentTerm)
+            .IsRequired()
+            .HasDefaultValue(4);
+
         builder.Property(l => l.Status)
             .HasConversion<int>()
             .IsRequired();

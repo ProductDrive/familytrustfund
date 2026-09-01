@@ -6,9 +6,13 @@ using FamilyTrustFund.Api.Contributions;
 using FamilyTrustFund.Api.Funds;
 using FamilyTrustFund.Api.Loans;
 using FamilyTrustFund.Api.Membership;
+using FamilyTrustFund.Api.Payments;
+using FamilyTrustFund.Api.Repayments;
+using FamilyTrustFund.Application.Payments;
 using FamilyTrustFund.Domain.Auth;
 using FamilyTrustFund.Infrastructure.Data;
 using FamilyTrustFund.Infrastructure.Identity;
+using FamilyTrustFund.Infrastructure.Payments;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.OpenApi;
@@ -33,6 +37,19 @@ builder.Services.AddScoped<FamilyTrustFund.Application.Loans.ILoanRepository, Fa
 builder.Services.AddScoped<FamilyTrustFund.Application.Loans.LoanService>();
 builder.Services.AddScoped<FamilyTrustFund.Application.Contributions.IContributionRepository, FamilyTrustFund.Infrastructure.Contributions.ContributionRepository>();
 builder.Services.AddScoped<FamilyTrustFund.Application.Contributions.ContributionService>();
+
+// ---- Payments (Phase 8): provider abstraction + disbursement ----
+builder.Services.Configure<PaystackOptions>(builder.Configuration.GetSection(PaystackOptions.SectionName));
+builder.Services.AddHttpClient<PaystackPaymentProvider>((sp, client) =>
+{
+    client.Timeout = TimeSpan.FromSeconds(30);
+});
+builder.Services.AddScoped<IPaymentProvider>(sp => sp.GetRequiredService<PaystackPaymentProvider>());
+builder.Services.AddScoped<IPaymentProviderRegistry, PaymentProviderRegistry>();
+builder.Services.AddScoped<FamilyTrustFund.Application.Payments.IPaymentRepository, FamilyTrustFund.Infrastructure.Payments.PaymentRepository>();
+builder.Services.AddScoped<DisbursementService>();
+builder.Services.AddScoped<FamilyTrustFund.Application.Repayments.IRepaymentRepository, FamilyTrustFund.Infrastructure.Repayments.RepaymentRepository>();
+builder.Services.AddScoped<FamilyTrustFund.Application.Repayments.RepaymentService>();
 
 // ---- JSON options (readable string enums in API contracts) ----
 // Enums are serialized with their exact member names (e.g. "Active",
@@ -178,6 +195,8 @@ app.MapFundEndpoints();
 app.MapMembershipEndpoints();
 app.MapLoanEndpoints();
 app.MapContributionEndpoints();
+app.MapPaymentEndpoints();
+app.MapRepaymentEndpoints();
 app.MapAdminEndpoints();
 if (app.Environment.IsDevelopment())
 {

@@ -38,6 +38,12 @@ public sealed class ApproveLoanRequest
     /// member's requested frequency (ADR-010).
     /// </summary>
     public RepaymentFrequency ApprovedFrequency { get; init; }
+
+    /// <summary>
+    /// Number of scheduled instalments (the repayment term). Optional — when
+    /// omitted a sensible default term is used.
+    /// </summary>
+    public int? RepaymentTerm { get; init; }
 }
 
 /// <summary>
@@ -68,6 +74,7 @@ public sealed class LoanDto
     public decimal InterestRate { get; init; }
     public RepaymentFrequency RequestedFrequency { get; init; }
     public RepaymentFrequency? ApprovedFrequency { get; init; }
+    public int RepaymentTerm { get; init; }
     public LoanStatus Status { get; init; }
     public LoanFundingSource FundingSource { get; init; }
     public decimal OutstandingBalance { get; init; }

@@ -3,6 +3,7 @@ using System;
 using FamilyTrustFund.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace FamilyTrustFund.Infrastructure.Data.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260831233912_AddPaymentRecipientAndDisbursement")]
+    partial class AddPaymentRecipientAndDisbursement
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -189,11 +192,6 @@ namespace FamilyTrustFund.Infrastructure.Data.Migrations
                     b.Property<string>("RejectionReason")
                         .HasMaxLength(1000)
                         .HasColumnType("character varying(1000)");
-
-                    b.Property<int>("RepaymentTerm")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer")
-                        .HasDefaultValue(4);
 
                     b.Property<decimal>("RequestedAmount")
                         .HasPrecision(18, 2)
@@ -395,118 +393,6 @@ namespace FamilyTrustFund.Infrastructure.Data.Migrations
                     b.HasIndex("MemberId", "IsActive");
 
                     b.ToTable("payment_recipients", (string)null);
-                });
-
-            modelBuilder.Entity("FamilyTrustFund.Domain.Repayments.LoanSchedule", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid>("LoanId")
-                        .HasColumnType("uuid");
-
-                    b.Property<int>("Version")
-                        .HasColumnType("integer");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("LoanId");
-
-                    b.HasIndex("LoanId", "Version")
-                        .IsUnique();
-
-                    b.ToTable("loan_schedules", (string)null);
-                });
-
-            modelBuilder.Entity("FamilyTrustFund.Domain.Repayments.LoanScheduleItem", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime>("DueDateUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<decimal>("ExpectedAmount")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("numeric(18,2)");
-
-                    b.Property<decimal>("InterestDue")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("numeric(18,2)");
-
-                    b.Property<decimal>("PaidAmount")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("numeric(18,2)");
-
-                    b.Property<DateTime?>("PaidAtUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<decimal>("PrincipalDue")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("numeric(18,2)");
-
-                    b.Property<Guid>("ScheduleId")
-                        .HasColumnType("uuid");
-
-                    b.Property<int>("Sequence")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("Status")
-                        .HasColumnType("integer");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("ScheduleId");
-
-                    b.HasIndex("Status");
-
-                    b.ToTable("loan_schedule_items", (string)null);
-                });
-
-            modelBuilder.Entity("FamilyTrustFund.Domain.Repayments.Repayment", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<decimal>("ActualAmount")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("numeric(18,2)");
-
-                    b.Property<decimal>("ExpectedAmount")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("numeric(18,2)");
-
-                    b.Property<int>("Kind")
-                        .HasColumnType("integer");
-
-                    b.Property<Guid>("LoanId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("Note")
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
-                    b.Property<DateTime>("PaidAtUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("ScheduleVersion")
-                        .HasColumnType("integer");
-
-                    b.Property<decimal>("Surplus")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("numeric(18,2)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("LoanId");
-
-                    b.ToTable("repayments", (string)null);
                 });
 
             modelBuilder.Entity("FamilyTrustFund.Infrastructure.Audit.AuditEvent", b =>
@@ -831,33 +717,6 @@ namespace FamilyTrustFund.Infrastructure.Data.Migrations
                         .IsRequired();
                 });
 
-            modelBuilder.Entity("FamilyTrustFund.Domain.Repayments.LoanSchedule", b =>
-                {
-                    b.HasOne("FamilyTrustFund.Domain.Loans.Loan", null)
-                        .WithMany()
-                        .HasForeignKey("LoanId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("FamilyTrustFund.Domain.Repayments.LoanScheduleItem", b =>
-                {
-                    b.HasOne("FamilyTrustFund.Domain.Repayments.LoanSchedule", null)
-                        .WithMany("Items")
-                        .HasForeignKey("ScheduleId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("FamilyTrustFund.Domain.Repayments.Repayment", b =>
-                {
-                    b.HasOne("FamilyTrustFund.Domain.Loans.Loan", null)
-                        .WithMany()
-                        .HasForeignKey("LoanId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-                });
-
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRoleClaim<System.Guid>", b =>
                 {
                     b.HasOne("FamilyTrustFund.Infrastructure.Identity.ApplicationRole", null)
@@ -907,11 +766,6 @@ namespace FamilyTrustFund.Infrastructure.Data.Migrations
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
-                });
-
-            modelBuilder.Entity("FamilyTrustFund.Domain.Repayments.LoanSchedule", b =>
-                {
-                    b.Navigation("Items");
                 });
 #pragma warning restore 612, 618
         }

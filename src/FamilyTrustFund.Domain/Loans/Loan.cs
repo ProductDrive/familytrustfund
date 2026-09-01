@@ -33,6 +33,9 @@ public class Loan
     /// <summary>Repayment frequency after Guarantor approval (may differ from request).</summary>
     public RepaymentFrequency? ApprovedFrequency { get; private set; }
 
+    /// <summary>Number of scheduled instalments for this loan, frozen at approval.</summary>
+    public int RepaymentTerm { get; private set; }
+
     public LoanStatus Status { get; private set; }
 
     /// <summary>
@@ -112,7 +115,8 @@ public class Loan
         Guid guarantorId,
         decimal approvedAmount,
         RepaymentFrequency approvedFrequency,
-        decimal totalRepayable)
+        decimal totalRepayable,
+        int repaymentTerm = 4)
     {
         if (Status != LoanStatus.Pending)
         {
@@ -129,9 +133,15 @@ public class Loan
             throw new InvalidLoanException("Total repayable must be at least the approved amount.");
         }
 
+        if (repaymentTerm <= 0)
+        {
+            throw new InvalidLoanException("Repayment term must be a positive number of instalments.");
+        }
+
         GuarantorId = guarantorId;
         ApprovedAmount = approvedAmount;
         ApprovedFrequency = approvedFrequency;
+        RepaymentTerm = repaymentTerm;
         TotalRepayable = totalRepayable;
         OutstandingBalance = approvedAmount;
         Status = LoanStatus.Approved;

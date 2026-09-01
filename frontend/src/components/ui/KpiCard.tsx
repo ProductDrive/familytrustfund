@@ -9,7 +9,7 @@ export function KpiCard({
 }: {
   label: string
   value: ReactNode
-  hint?: string
+  hint?: ReactNode
   icon?: ReactNode
   tone?: 'info' | 'success' | 'warning' | 'danger' | 'neutral' | 'pending'
 }) {

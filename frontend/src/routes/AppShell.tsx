@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
-import { Landmark, LogOut, Menu, Users, LayoutDashboard, HandCoins, PiggyBank } from 'lucide-react'
+import { Landmark, LogOut, Menu, Users, LayoutDashboard, HandCoins, PiggyBank, Send, Wallet } from 'lucide-react'
 import { useCurrentUser, type Role } from '../features/auth/authApi'
 import { Avatar, LogoMark } from '../components/ui/Avatar'
 import { ThemeToggle } from '../components/ui/ThemeToggle'
@@ -98,6 +98,14 @@ export function AppShell() {
               onNavigate={closeMenu}
             />
           )}
+          {isMember && (
+            <NavItem
+              to="/repayments"
+              icon={<Wallet size={17} />}
+              label="Repayments"
+              onNavigate={closeMenu}
+            />
+          )}
           {isGuarantor && (
             <NavItem
               to="/guarantor/loans"
@@ -111,6 +119,14 @@ export function AppShell() {
               to="/guarantor/contributions"
               icon={<PiggyBank size={17} />}
               label="Contribution Confirmations"
+              onNavigate={closeMenu}
+            />
+          )}
+          {isGuarantor && (
+            <NavItem
+              to="/guarantor/disburse"
+              icon={<Send size={17} />}
+              label="Disbursements"
               onNavigate={closeMenu}
             />
           )}
