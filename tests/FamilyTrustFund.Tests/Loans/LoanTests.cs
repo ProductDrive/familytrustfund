@@ -150,6 +150,79 @@ public class LoanTests
     }
 
     [Fact]
+    public void CancelByMember_cancels_pending_request()
+    {
+        var loan = Loan.Request(FundId, MemberId, 100m, RepaymentFrequency.Weekly, 0m, LoanFundingSource.GuarantorCapital);
+
+        loan.CancelByMember(MemberId);
+
+        loan.Status.Should().Be(LoanStatus.Cancelled);
+        loan.CancelledByUserId.Should().Be(MemberId);
+        loan.CancelledAtUtc.Should().NotBeNull();
+    }
+
+    [Fact]
+    public void CancelByMember_approved_loan_throws()
+    {
+        var loan = Loan.Request(FundId, MemberId, 100m, RepaymentFrequency.Weekly, 0m, LoanFundingSource.GuarantorCapital);
+        loan.Approve(GuarantorId, 100m, RepaymentFrequency.Weekly, 100m);
+
+        var act = () => loan.CancelByMember(MemberId);
+        act.Should().Throw<InvalidLoanException>()
+            .WithMessage("*pending loan request*");
+    }
+
+    [Fact]
+    public void CancelByGuarantor_cancels_pending_request()
+    {
+        var loan = Loan.Request(FundId, MemberId, 100m, RepaymentFrequency.Weekly, 0m, LoanFundingSource.GuarantorCapital);
+
+        loan.CancelByGuarantor(GuarantorId);
+
+        loan.Status.Should().Be(LoanStatus.Cancelled);
+        loan.CancelledByUserId.Should().Be(GuarantorId);
+        loan.CancelledAtUtc.Should().NotBeNull();
+    }
+
+    [Fact]
+    public void CancelByGuarantor_cancels_approved_loan()
+    {
+        var loan = Loan.Request(FundId, MemberId, 100m, RepaymentFrequency.Weekly, 0m, LoanFundingSource.GuarantorCapital);
+        loan.Approve(GuarantorId, 100m, RepaymentFrequency.Weekly, 100m);
+
+        loan.CancelByGuarantor(GuarantorId);
+
+        loan.Status.Should().Be(LoanStatus.Cancelled);
+        loan.CancelledByUserId.Should().Be(GuarantorId);
+    }
+
+    [Fact]
+    public void CancelByGuarantor_disbursed_loan_throws()
+    {
+        var loan = Loan.Request(FundId, MemberId, 100m, RepaymentFrequency.Weekly, 0m, LoanFundingSource.GuarantorCapital);
+        loan.Approve(GuarantorId, 100m, RepaymentFrequency.Weekly, 100m);
+        loan.MarkDisbursementPending();
+        loan.MarkDisbursed();
+
+        var act = () => loan.CancelByGuarantor(GuarantorId);
+        act.Should().Throw<InvalidLoanException>()
+            .WithMessage("*not yet disbursed*");
+    }
+
+    [Fact]
+    public void CancelByGuarantor_completed_loan_throws()
+    {
+        var loan = Loan.Request(FundId, MemberId, 100m, RepaymentFrequency.Weekly, 0m, LoanFundingSource.GuarantorCapital);
+        loan.Approve(GuarantorId, 100m, RepaymentFrequency.Weekly, 100m);
+        loan.MarkDisbursementPending();
+        loan.MarkDisbursed();
+        loan.MarkCompleted();
+
+        var act = () => loan.CancelByGuarantor(GuarantorId);
+        act.Should().Throw<InvalidLoanException>();
+    }
+
+    [Fact]
     public void MarkDisbursementPending_from_approved()
     {
         var loan = Loan.Request(FundId, MemberId, 100m, RepaymentFrequency.Weekly, 0m, LoanFundingSource.GuarantorCapital);

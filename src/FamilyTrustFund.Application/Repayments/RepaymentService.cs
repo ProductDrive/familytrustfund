@@ -53,12 +53,24 @@ public class RepaymentService
             loan.ApprovedFrequency!.Value,
             loan.RepaymentTerm);
 
-        await _repaymentRepository.AddAsync(schedule, ct);
-        await _auditLog.RecordAsync(actorId, "Repayment.ScheduleCreated", "LoanSchedule", schedule.Id,
-            $"LoanId={loanId}, Version=1, Term={loan.RepaymentTerm}", ct);
-        await _repaymentRepository.SaveChangesAsync(ct);
+        // The unique (LoanId, Version) index is the authoritative guard: the
+        // schedule creation is idempotent, so a concurrent verification/webhook
+        // that already created this revision does not surface a duplicate-key
+        // error (AGENTS §7.3).
+        var saved = await _repaymentRepository.SaveNewScheduleAsync(schedule, ct);
+        if (saved is null)
+        {
+            throw new InvalidRepaymentException("Repayment schedule could not be created.");
+        }
 
-        return ToScheduleDto(schedule, isCurrent: true);
+        if (saved.Id == schedule.Id)
+        {
+            await _auditLog.RecordAsync(actorId, "Repayment.ScheduleCreated", "LoanSchedule", saved.Id,
+                $"LoanId={loanId}, Version=1, Term={loan.RepaymentTerm}", ct);
+            await _repaymentRepository.SaveChangesAsync(ct);
+        }
+
+        return ToScheduleDto(saved, isCurrent: true);
     }
 
     /// <summary>Returns the current schedule for a loan.</summary>
@@ -94,8 +106,31 @@ public class RepaymentService
         var repayments = await _repaymentRepository.GetRepaymentsAsync(loanId, ct);
         return repayments
             .OrderByDescending(r => r.PaidAtUtc)
-            .Select(ToRepaymentDto)
+            .Select(r => ToRepaymentDto(r))
             .ToList();
+    }
+
+    /// <summary>
+    /// Returns the member's repayment history across all loans, paginated
+    /// and including the fund name for each record.
+    /// </summary>
+    public async Task<PagedRepaymentsResult> GetMyRepaymentsAsync(
+        Guid memberId,
+        int page = 1,
+        int pageSize = 10,
+        CancellationToken ct = default)
+    {
+        if (page < 1) page = 1;
+        if (pageSize < 1 || pageSize > 100) pageSize = 10;
+
+        var (items, totalCount) = await _repaymentRepository.GetMyRepaymentsAsync(memberId, page, pageSize, ct);
+        return new PagedRepaymentsResult
+        {
+            Items = items.Select(x => ToRepaymentDto(x.Repayment, x.FundName)).ToList(),
+            TotalCount = totalCount,
+            Page = page,
+            PageSize = pageSize,
+        };
     }
 
     /// <summary>Returns the server-calculated repayment summary for a loan.</summary>
@@ -340,10 +375,11 @@ public class RepaymentService
         Items = schedule.Items.OrderBy(i => i.Sequence).Select(ToItemDto).ToList(),
     };
 
-    private static RepaymentDto ToRepaymentDto(Repayment r) => new()
+    private static RepaymentDto ToRepaymentDto(Repayment r, string fundName = "") => new()
     {
         Id = r.Id,
         LoanId = r.LoanId,
+        FundName = fundName,
         ScheduleVersion = r.ScheduleVersion,
         Kind = r.Kind,
         ExpectedAmount = r.ExpectedAmount,

@@ -728,6 +728,21 @@ code {
   padding: 20px 24px 0;
 }
 
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.table-scroll .data-table {
+  min-width: 560px;
+}
+
+@media (max-width: 640px) {
+  .table-scroll .data-table {
+    min-width: 520px;
+  }
+}
+
 .data-table {
   width: 100%;
   border-collapse: collapse;
@@ -1014,6 +1029,237 @@ code {
 .form-title + .muted {
   margin-top: 0;
   margin-bottom: 16px;
+}
+
+/* ------------------------------------------------------------
+   Modal / dialog overlay
+   ------------------------------------------------------------ */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(11, 15, 20, 0.55);
+  padding: 24px;
+  animation: fade-in 150ms ease;
+}
+
+.modal {
+  position: relative;
+  width: 100%;
+  max-height: calc(100dvh - 48px);
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-pop);
+  padding: 24px;
+  animation: slide-up 150ms ease;
+}
+
+@keyframes fade-in {
+  from { opacity: 0 }
+  to   { opacity: 1 }
+}
+
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(12px) }
+  to   { opacity: 1; transform: translateY(0) }
+}
+
+.modal-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.modal-close:hover {
+  background: var(--muted-bg);
+  color: var(--text);
+}
+
+.modal h2,
+.modal h3 {
+  margin: 0 0 12px;
+  padding-right: 36px;
+}
+
+.modal p {
+  margin: 0;
+  line-height: 1.55;
+}
+
+/* ------------------------------------------------------------
+   Family Capital transition alert + confirm modal list
+   ------------------------------------------------------------ */
+
+.transition-alert {
+  background: var(--info-bg);
+  border: 1px solid var(--info);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  margin-bottom: 12px;
+}
+
+.transition-alert h3 {
+  margin: 0 0 6px;
+  font-size: 15px;
+  color: var(--info-fg);
+  font-weight: 600;
+}
+
+.transition-alert--progress {
+  background: var(--neutral-bg);
+  border-color: var(--border);
+}
+
+.transition-alert--progress h3 {
+  color: var(--text);
+}
+
+.transition-alert p {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.transition-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin: 12px 0;
+  font-size: 13px;
+}
+
+.transition-metrics dt {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.transition-metrics dd {
+  margin: 0;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.modal .checklist {
+  margin: 12px 0 20px;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.modal .checklist li {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+  line-height: 1.45;
+}
+
+.modal .checklist li::before {
+  content: '\2713';
+  flex-shrink: 0;
+  font-weight: 700;
+  color: var(--info);
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+/* ------------------------------------------------------------
+   Funded capital panel + Add capital flow
+   ------------------------------------------------------------ */
+
+.capital-panel {
+  background: var(--neutral-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  margin-bottom: 12px;
+}
+
+.capital-panel h3 {
+  margin: 0 0 4px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.capital-panel .muted {
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+
+.capital-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.capital-return {
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  padding: 16px 20px;
+  margin-bottom: 16px;
+}
+
+.capital-return h3 {
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.capital-return--verifying {
+  background: var(--neutral-bg);
+}
+
+.capital-return--verifying h3 {
+  color: var(--text);
+}
+
+.capital-return--confirmed {
+  background: var(--success-bg);
+  border-color: var(--success);
+}
+
+.capital-return--confirmed h3 {
+  color: var(--success-fg);
+}
+
+.capital-return--failed {
+  background: var(--danger-bg);
+  border-color: var(--danger);
+}
+
+.capital-return--failed h3 {
+  color: var(--danger-fg);
+}
+
+.capital-return .muted {
+  margin: 0 0 10px;
+  font-size: 13px;
 }
 
 /* ------------------------------------------------------------

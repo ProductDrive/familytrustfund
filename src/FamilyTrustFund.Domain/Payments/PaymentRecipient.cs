@@ -26,6 +26,14 @@ public class PaymentRecipient
     /// <summary>Provider-issued recipient reference (e.g. Paystack recipient code).</summary>
     public string? ProviderRecipientCode { get; private set; }
 
+    /// <summary>
+    /// Provider-issued subaccount code (e.g. Paystack <c>ACCT_...</c>). Created
+    /// when the member verifies their bank details. A disbursement is settled to
+    /// the member through this subaccount after the Guarantor's payment is
+    /// confirmed (ADR-044).
+    /// </summary>
+    public string? ProviderSubaccountCode { get; private set; }
+
     public PaymentRecipientStatus Status { get; private set; } = PaymentRecipientStatus.Unverified;
     public bool IsActive { get; private set; }
     public DateTime CreatedAtUtc { get; private set; } = DateTime.UtcNow;
@@ -101,6 +109,21 @@ public class PaymentRecipient
         ProviderRecipientCode = providerRecipientCode.Trim();
         Status = PaymentRecipientStatus.Active;
         IsActive = true;
+        Touch();
+    }
+
+    /// <summary>
+    /// Records the provider-issued subaccount code used to settle disbursements
+    /// to this member. A recipient has at most one active subaccount.
+    /// </summary>
+    public void AttachSubaccount(string providerSubaccountCode)
+    {
+        if (string.IsNullOrWhiteSpace(providerSubaccountCode))
+        {
+            throw new InvalidPaymentException("Provider subaccount code is required.");
+        }
+
+        ProviderSubaccountCode = providerSubaccountCode.Trim();
         Touch();
     }
 

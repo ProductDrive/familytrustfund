@@ -11,6 +11,8 @@ import { StatusBadge } from '../../components/ui/Badge'
 import { Button } from '../../components/ui/Button'
 import { EmptyState, SkeletonCard } from '../../components/ui/State'
 import { MoneyDisplay } from '../../lib/money'
+import { formatShortDateTime } from '../../lib/formatDate'
+import { GuarantorEvidenceView } from '../evidence/GuarantorEvidenceView'
 import type { Contribution } from './contributionApi'
 
 function ContributeDecision({
@@ -23,12 +25,16 @@ function ContributeDecision({
   const confirm = useConfirmContribution()
   const reject = useRejectContribution()
   const [reason, setReason] = useState('')
+  const [note, setNote] = useState('')
   const [mode, setMode] = useState<'confirm' | 'reject'>('confirm')
 
   function submit(e: React.FormEvent) {
     e.preventDefault()
     if (mode === 'confirm') {
-      confirm.mutate({ contributionId: contribution.id }, { onSuccess: onDone })
+      confirm.mutate(
+        { contributionId: contribution.id, note: note.trim() || null },
+        { onSuccess: onDone },
+      )
     } else {
       reject.mutate(
         { contributionId: contribution.id, reason: reason.trim() || null },
@@ -39,7 +45,18 @@ function ContributeDecision({
 
   return (
     <form onSubmit={submit}>
-      {mode === 'reject' && (
+      {mode === 'confirm' ? (
+        <div className="field">
+          <label htmlFor={`note-${contribution.id}`}>Confirmation note (optional)</label>
+          <textarea
+            id={`note-${contribution.id}`}
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            rows={2}
+            placeholder="Add a note to this confirmation, e.g. payment verified with the member."
+          />
+        </div>
+      ) : (
         <div className="field">
           <label htmlFor={`reason-${contribution.id}`}>Rejection reason (optional)</label>
           <textarea
@@ -143,12 +160,19 @@ export function GuarantorContributionsPage() {
                   <li>
                     <span className="property-label">Reported</span>
                     <span className="property-value">
-                      {new Date(c.reportedAtUtc).toLocaleString()}
+                      {formatShortDateTime(c.reportedAtUtc)}
                     </span>
                   </li>
                 </ul>
 
                 <div style={{ marginTop: 16 }}>
+                  <div style={{ marginBottom: 8 }}>
+                    <GuarantorEvidenceView
+                      kind="contribution"
+                      resourceId={c.id}
+                      hasEvidence={c.hasEvidence}
+                    />
+                  </div>
                   {!open ? (
                     <Button onClick={() => toggle(c.id)}>
                       <BadgeCheck size={16} /> Review

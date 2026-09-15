@@ -95,11 +95,9 @@ public class ContributionRepository : IContributionRepository
 
     public Task<bool> HasActiveDisbursedLoanAsync(
         Guid memberId,
-        Guid fundId,
         CancellationToken ct = default) =>
         _db.Loans.AnyAsync(
             l => l.MemberId == memberId
-                && l.FundId == fundId
                 && l.Status == LoanStatus.Disbursed,
             ct);
 

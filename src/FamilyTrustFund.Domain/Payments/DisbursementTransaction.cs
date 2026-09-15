@@ -1,13 +1,15 @@
 namespace FamilyTrustFund.Domain.Payments;
 
 /// <summary>
-/// A single disbursement transfer from the fund to a member's recipient.
+/// A single disbursement settlement from the fund to a member's recipient.
 /// </summary>
 /// <remarks>
 /// This records the authoritative provider transaction for a loan disbursement.
-/// Provider events are idempotent: a duplicate webhook must never alter the
-/// disbursement twice. The loan itself is only marked DISBURSED after a
-/// provider-confirmed success (AGENTS §3).
+/// The Guarantor pays per disbursement (ADR-044); the provider reference is the
+/// collection the Guarantor must complete. The member is settled through their
+/// subaccount once the collection is confirmed. Provider events are idempotent:
+/// a duplicate webhook must never alter state twice. The loan itself is only
+/// marked DISBURSED after a provider-confirmed success (AGENTS §3).
 /// </remarks>
 public class DisbursementTransaction
 {
@@ -129,6 +131,37 @@ public class DisbursementTransaction
 
         Touch();
         return true;
+    }
+
+    /// <summary>
+    /// Re-opens a failed disbursement for a new Guarantor payment attempt,
+    /// replacing the provider reference and resetting state to Pending.
+    /// Historical audit records keep the previous attempt.
+    /// </summary>
+    public void ResetForRetry(string providerReference, string idempotencyKey)
+    {
+        if (Status != DisbursementStatus.Failed)
+        {
+            throw new InvalidPaymentException("Only a failed disbursement can be retried.");
+        }
+
+        if (string.IsNullOrWhiteSpace(providerReference))
+        {
+            throw new InvalidPaymentException("Provider reference is required.");
+        }
+
+        if (string.IsNullOrWhiteSpace(idempotencyKey))
+        {
+            throw new InvalidPaymentException("An idempotency key is required.");
+        }
+
+        ProviderReference = providerReference.Trim();
+        IdempotencyKey = idempotencyKey.Trim();
+        LastProcessedEventId = null;
+        Status = DisbursementStatus.Pending;
+        FailureReason = null;
+        CompletedAtUtc = null;
+        Touch();
     }
 
     private void Touch() => UpdatedAtUtc = DateTime.UtcNow;

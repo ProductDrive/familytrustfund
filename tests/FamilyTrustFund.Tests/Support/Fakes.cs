@@ -1,11 +1,14 @@
 using FamilyTrustFund.Application.Audit;
 using FamilyTrustFund.Application.Contributions;
+using FamilyTrustFund.Application.Evidence;
 using FamilyTrustFund.Application.Funds;
 using FamilyTrustFund.Application.Loans;
 using FamilyTrustFund.Application.Membership;
 using FamilyTrustFund.Application.Payments;
 using FamilyTrustFund.Application.Repayments;
+using FamilyTrustFund.Application.Storage;
 using FamilyTrustFund.Domain.Contributions;
+using FamilyTrustFund.Domain.Evidence;
 using FamilyTrustFund.Domain.Funds;
 using FamilyTrustFund.Domain.Loans;
 using FamilyTrustFund.Domain.Membership;
@@ -90,8 +93,6 @@ public sealed class FakeLoanRepository : ILoanRepository
 
     public List<LoanWithDetails> LoanDetails { get; set; } = new();
 
-    public Dictionary<(Guid MemberId, Guid FundId), int> ActiveDisbursedCounts { get; set; } = new();
-
     public Dictionary<Guid, decimal> DisbursedTotals { get; set; } = new();
 
     public HashSet<(Guid MemberId, Guid FundId)> PendingRequests { get; set; } = new();
@@ -144,14 +145,15 @@ public sealed class FakeLoanRepository : ILoanRepository
         return Task.FromResult<IReadOnlyList<LoanWithDetails>>(items);
     }
 
-    public Task<int> CountActiveDisbursedByMemberInFundAsync(
+    public Task<int> CountActiveByMemberAsync(
         Guid memberId,
-        Guid fundId,
         CancellationToken ct = default)
     {
-        var key = (memberId, fundId);
-        return Task.FromResult(
-            ActiveDisbursedCounts.TryGetValue(key, out var count) ? count : 0);
+        var count = Loans.Count(l => l.MemberId == memberId
+            && (l.Status == LoanStatus.Pending
+                || l.Status == LoanStatus.Approved
+                || l.Status == LoanStatus.Disbursed));
+        return Task.FromResult(count);
     }
 
     public Task<decimal> SumActiveDisbursedByFundAsync(Guid fundId, CancellationToken ct = default)
@@ -254,19 +256,94 @@ public sealed class FakeContributionRepository : IContributionRepository
 
     public Task<bool> HasActiveDisbursedLoanAsync(
         Guid memberId,
-        Guid fundId,
         CancellationToken ct = default) =>
-        Task.FromResult(ActiveLoans.Contains((memberId, fundId)));
+        Task.FromResult(ActiveLoans.Any(a => a.MemberId == memberId));
 
     public void Add(FundContribution contribution) => Contributions.Add(contribution);
 
     public Task SaveChangesAsync(CancellationToken ct = default) => Task.CompletedTask;
 }
 
+public sealed class FakeEvidenceRepository : IEvidenceRepository
+{
+    public List<PaymentEvidence> Items { get; } = new();
+
+    public Task<PaymentEvidence?> GetByIdAsync(Guid id, CancellationToken ct = default) =>
+        Task.FromResult(Items.FirstOrDefault(e => e.Id == id));
+
+    public Task<IReadOnlyList<PaymentEvidence>> GetForResourceAsync(
+        string resourceType,
+        Guid resourceId,
+        CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<PaymentEvidence>>(
+            Items.Where(e => string.Equals(e.ResourceType, resourceType, StringComparison.OrdinalIgnoreCase)
+                && e.ResourceId == resourceId)
+            .OrderBy(e => e.UploadedAtUtc)
+            .ToList());
+
+    public Task<IReadOnlyList<PaymentEvidence>> GetByUploaderAsync(
+        Guid uploaderId,
+        CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<PaymentEvidence>>(
+            Items.Where(e => e.UploadedByUserId == uploaderId).ToList());
+
+    public void Add(PaymentEvidence evidence) => Items.Add(evidence);
+
+    public Task SaveChangesAsync(CancellationToken ct = default) => Task.CompletedTask;
+}
+
+public sealed class FakeFileStorage : IFileStorage
+{
+    public Dictionary<string, byte[]> Objects { get; } = new();
+
+    public Task<StoredObject> StoreAsync(
+        string container,
+        byte[] content,
+        string contentType,
+        CancellationToken ct = default)
+    {
+        var key = $"obj-{Objects.Count + 1}-{contentType}";
+        Objects[key] = content;
+        return Task.FromResult(new StoredObject
+        {
+            Container = container,
+            ObjectKey = key,
+            ContentType = contentType,
+            SizeBytes = content.LongLength,
+        });
+    }
+
+    public Task<StoredObject?> ReadAsync(
+        string container,
+        string objectKey,
+        CancellationToken ct = default)
+    {
+        if (!Objects.TryGetValue(objectKey, out var content))
+        {
+            return Task.FromResult<StoredObject?>(null);
+        }
+
+        return Task.FromResult<StoredObject?>(new StoredObject
+        {
+            Container = container,
+            ObjectKey = objectKey,
+            ContentType = objectKey.Contains("image/png") ? "image/png" : "application/pdf",
+            SizeBytes = content.LongLength,
+            Content = content,
+        });
+    }
+
+    public Task<bool> DeleteAsync(string container, string objectKey, CancellationToken ct = default) =>
+        Task.FromResult(Objects.Remove(objectKey));
+}
+
 public sealed class FakePaymentRepository : IPaymentRepository
 {
     public List<PaymentRecipient> Recipients { get; } = new();
     public List<DisbursementTransaction> Transactions { get; } = new();
+
+    /// <summary>Funded-balance consumption per fund (pending + successful transfers).</summary>
+    public Dictionary<Guid, decimal> InProgressByFund { get; } = new();
 
     public Task<PaymentRecipient?> GetByIdAsync(Guid id, CancellationToken ct = default) =>
         Task.FromResult(Recipients.FirstOrDefault(r => r.Id == id));
@@ -316,6 +393,45 @@ public sealed class FakePaymentRepository : IPaymentRepository
     public Task SaveChangesAsync(CancellationToken ct = default) => Task.CompletedTask;
 }
 
+public sealed class FakeCapitalFundingRepository : ICapitalFundingRepository
+{
+    public List<CapitalTransaction> Transactions { get; } = new();
+
+    /// <summary>Confirmed net funding per fund (test seeding of the derived value).</summary>
+    public Dictionary<Guid, decimal> ConfirmedNetByFund { get; } = new();
+
+    public Task<CapitalTransaction?> GetByIdAsync(Guid id, CancellationToken ct = default) =>
+        Task.FromResult(Transactions.FirstOrDefault(t => t.Id == id));
+
+    public Task<CapitalTransaction?> GetByProviderReferenceAsync(
+        string providerReference,
+        CancellationToken ct = default) =>
+        Task.FromResult(Transactions.FirstOrDefault(t => t.ProviderReference == providerReference));
+
+    public Task<IReadOnlyList<CapitalTransaction>> GetByFundAsync(
+        Guid fundId,
+        int page,
+        int pageSize,
+        CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<CapitalTransaction>>(
+            Transactions
+                .Where(t => t.FundId == fundId)
+                .OrderByDescending(t => t.InitiatedAtUtc)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .ToList());
+
+    public Task<int> CountByFundAsync(Guid fundId, CancellationToken ct = default) =>
+        Task.FromResult(Transactions.Count(t => t.FundId == fundId));
+
+    public Task<decimal> SumConfirmedNetByFundAsync(Guid fundId, CancellationToken ct = default) =>
+        Task.FromResult(ConfirmedNetByFund.TryGetValue(fundId, out var total) ? total : 0m);
+
+    public void Add(CapitalTransaction transaction) => Transactions.Add(transaction);
+
+    public Task SaveChangesAsync(CancellationToken ct = default) => Task.CompletedTask;
+}
+
 public sealed class FakePaymentProvider : IPaymentProvider
 {
     public string Name { get; set; } = "Paystack";
@@ -324,12 +440,30 @@ public sealed class FakePaymentProvider : IPaymentProvider
     public bool RecipientFail { get; set; }
     public bool TransferFail { get; set; }
 
+    public bool SubaccountFail { get; set; }
+    public string SubaccountCode { get; set; } = "SUB_abc123";
+
+    public decimal? EstimatedFee { get; set; }
+    public bool CollectionInitFail { get; set; }
+    public string CollectionReference { get; set; } = "COL_chk789";
+    public string AuthorizationUrl { get; set; } = "https://paystack.test/checkout";
+    public bool VerifyPaid { get; set; } = true;
+    public bool VerifyFail { get; set; }
+    public decimal VerifyFee { get; set; } = 100m;
+
     public Task<PaymentProviderResult> CreateRecipientAsync(
         CreateRecipientRequest request,
         CancellationToken ct = default) =>
         Task.FromResult(RecipientFail
-            ? PaymentProviderResult.Fail("Recipient verification failed.")
+            ? PaymentProviderResult.Fail($"Recipient verification failed: {request?.AccountNumber ?? "unknown"}.")
             : PaymentProviderResult.Ok(RecipientCode));
+
+    public Task<PaymentProviderResult> CreateSubaccountAsync(
+        CreateSubaccountRequest request,
+        CancellationToken ct = default) =>
+        Task.FromResult(SubaccountFail
+            ? PaymentProviderResult.Fail($"Subaccount creation failed: {request?.AccountNumber ?? "unknown"}.")
+            : PaymentProviderResult.Ok(SubaccountCode));
 
     public Task<PaymentProviderResult> InitiateTransferAsync(
         InitiateTransferRequest request,
@@ -337,6 +471,36 @@ public sealed class FakePaymentProvider : IPaymentProvider
         Task.FromResult(TransferFail
             ? PaymentProviderResult.Fail("Transfer initiation failed.")
             : PaymentProviderResult.Ok(TransferReference));
+
+    public Task<CollectionChargeEstimateResult> EstimateCollectionChargeAsync(
+        decimal amount,
+        string currency,
+        CancellationToken ct = default)
+    {
+        var fee = EstimatedFee ?? CapitalTransaction.ComputeEstimatedFee(amount);
+        return Task.FromResult(CollectionChargeEstimateResult.Ok(fee, amount + fee));
+    }
+
+    public Task<CollectionInitiationResult> InitializeCollectionAsync(
+        CollectionInitiationRequest request,
+        CancellationToken ct = default) =>
+        Task.FromResult(CollectionInitFail
+            ? CollectionInitiationResult.Fail("Collection initiation failed.")
+            : CollectionInitiationResult.Ok(CollectionReference, AuthorizationUrl));
+
+    public Task<CollectionVerificationResult> VerifyCollectionAsync(
+        string providerReference,
+        CancellationToken ct = default)
+    {
+        if (VerifyFail)
+        {
+            return Task.FromResult(CollectionVerificationResult.Fail("The payment provider could not be reached. Please try again."));
+        }
+
+        return Task.FromResult(VerifyPaid
+            ? CollectionVerificationResult.PaidSuccess(0m, VerifyFee)
+            : CollectionVerificationResult.NotPaid("Payment status is 'abandoned'."));
+    }
 }
 
 public sealed class FakePaymentProviderRegistry : IPaymentProviderRegistry
@@ -350,6 +514,7 @@ public sealed class FakePaymentProviderRegistry : IPaymentProviderRegistry
 public sealed class FakeRepaymentRepository : IRepaymentRepository
 {
     public List<Loan> Loans { get; } = new();
+    public List<Fund> Funds { get; } = new();
     public List<LoanSchedule> Schedules { get; } = new();
     public List<Repayment> Repayments { get; } = new();
 
@@ -373,10 +538,54 @@ public sealed class FakeRepaymentRepository : IRepaymentRepository
         Task.FromResult<IReadOnlyList<Repayment>>(
             Repayments.Where(r => r.LoanId == loanId).ToList());
 
+    public Task<(IReadOnlyList<RepaymentWithFund> Items, int TotalCount)> GetMyRepaymentsAsync(
+        Guid memberId, int page, int pageSize, CancellationToken ct = default)
+    {
+        if (page < 1) page = 1;
+        if (pageSize < 1) pageSize = 10;
+
+        var loanIds = Loans.Where(l => l.MemberId == memberId).Select(l => l.Id).ToHashSet();
+        var ordered = Repayments
+            .Where(r => loanIds.Contains(r.LoanId))
+            .OrderByDescending(r => r.PaidAtUtc)
+            .ToList();
+
+        var items = ordered
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .Select(r =>
+            {
+                var loan = Loans.FirstOrDefault(l => l.Id == r.LoanId);
+                var fund = loan is null ? null : Funds.FirstOrDefault(f => f.Id == loan.FundId);
+                return new RepaymentWithFund
+                {
+                    Repayment = r,
+                    FundName = fund?.Name ?? string.Empty,
+                };
+            })
+            .ToList();
+
+        IReadOnlyList<RepaymentWithFund> result = items;
+        return Task.FromResult((result, ordered.Count));
+    }
+
     public Task AddAsync(LoanSchedule schedule, CancellationToken ct = default)
     {
         Schedules.Add(schedule);
         return Task.CompletedTask;
+    }
+
+    public Task<LoanSchedule?> SaveNewScheduleAsync(LoanSchedule schedule, CancellationToken ct = default)
+    {
+        var existing = Schedules.FirstOrDefault(s =>
+            s.LoanId == schedule.LoanId && s.Version == schedule.Version);
+        if (existing is not null)
+        {
+            return Task.FromResult<LoanSchedule?>(existing);
+        }
+
+        Schedules.Add(schedule);
+        return Task.FromResult<LoanSchedule?>(schedule);
     }
 
     public Task AddAsync(Repayment repayment, CancellationToken ct = default)
@@ -384,6 +593,42 @@ public sealed class FakeRepaymentRepository : IRepaymentRepository
         Repayments.Add(repayment);
         return Task.CompletedTask;
     }
+
+    public Task SaveChangesAsync(CancellationToken ct = default) => Task.CompletedTask;
+}
+
+public sealed class FakePendingRepaymentRepository : IPendingRepaymentRepository
+{
+    public List<PendingRepayment> Items { get; } = new();
+
+    public List<PendingRepaymentWithDetails> Details { get; set; } = new();
+
+    public Task<PendingRepayment?> GetByIdAsync(Guid id, CancellationToken ct = default) =>
+        Task.FromResult(Items.FirstOrDefault(p => p.Id == id));
+
+    public Task<bool> HasPendingForLoanAsync(Guid loanId, CancellationToken ct = default) =>
+        Task.FromResult(Items.Any(p => p.LoanId == loanId && p.Status == PendingRepaymentStatus.PendingConfirmation));
+
+    public Task<bool> HasPendingByMemberAndFundAsync(
+        Guid memberId,
+        Guid fundId,
+        CancellationToken ct = default) =>
+        Task.FromResult(Items.Any(p => p.MemberId == memberId && p.Status == PendingRepaymentStatus.PendingConfirmation));
+
+    public Task<IReadOnlyList<PendingRepaymentWithDetails>> GetPendingForGuarantorAsync(
+        Guid guarantorId,
+        CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<PendingRepaymentWithDetails>>(
+            Details.Where(d => d.Pending.Status == PendingRepaymentStatus.PendingConfirmation
+                && d.GuarantorId == guarantorId).ToList());
+
+    public Task<IReadOnlyList<PendingRepaymentWithDetails>> GetByMemberAsync(
+        Guid memberId,
+        CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<PendingRepaymentWithDetails>>(
+            Details.Where(d => d.MemberId == memberId).ToList());
+
+    public void Add(PendingRepayment pending) => Items.Add(pending);
 
     public Task SaveChangesAsync(CancellationToken ct = default) => Task.CompletedTask;
 }

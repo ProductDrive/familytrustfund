@@ -1,6 +1,7 @@
 using FamilyTrustFund.Application.Audit;
 using FamilyTrustFund.Application.Funds;
 using FamilyTrustFund.Application.Loans;
+using FamilyTrustFund.Application.Repayments;
 using FamilyTrustFund.Domain.Funds;
 using FamilyTrustFund.Domain.Loans;
 using FamilyTrustFund.Domain.Payments;
@@ -8,14 +9,18 @@ using FamilyTrustFund.Domain.Payments;
 namespace FamilyTrustFund.Application.Payments;
 
 /// <summary>
-/// Application service for loan disbursement: bank-recipient management,
-/// transfer initiation and idempotent webhook-driven finalisation.
+/// Application service for loan disbursement: bank-recipient management
+/// (including each member's settlement subaccount), Guarantor pay-per-
+/// disbursement, and idempotent webhook-driven finalisation.
 /// </summary>
 /// <remarks>
-/// A successful provider API request alone does not mark a loan disbursed.
-/// Only a provider webhook confirmation changes the loan to DISBURSED and
-/// records actual disbursed capital (AGENTS §3). All financial transitions are
-/// transactional and idempotent.
+/// Guarantors do not pre-fund the platform. A disbursement is initiated only
+/// when the Guarantor pays for it: a collection is started for the gross amount
+/// (approved amount + provider fee) and split to the member's subaccount, so
+/// the member is settled through their subaccount once the payment is
+/// confirmed. Only a provider webhook/verification confirms the payment and
+/// changes the loan to DISBURSED (AGENTS §3). All financial transitions are
+/// transactional and idempotent (ADR-044).
 /// </remarks>
 public class DisbursementService
 {
@@ -30,21 +35,27 @@ public class DisbursementService
 
     private readonly IPaymentRepository _paymentRepository;
     private readonly IPaymentProviderRegistry _providerRegistry;
+    private readonly ICapitalFundingRepository _capitalFundingRepository;
     private readonly ILoanRepository _loanRepository;
     private readonly IFundRepository _fundRepository;
+    private readonly RepaymentService _repaymentService;
     private readonly IAuditLog _auditLog;
 
     public DisbursementService(
         IPaymentRepository paymentRepository,
         IPaymentProviderRegistry providerRegistry,
+        ICapitalFundingRepository capitalFundingRepository,
         ILoanRepository loanRepository,
         IFundRepository fundRepository,
+        RepaymentService repaymentService,
         IAuditLog auditLog)
     {
         _paymentRepository = paymentRepository;
         _providerRegistry = providerRegistry;
+        _capitalFundingRepository = capitalFundingRepository;
         _loanRepository = loanRepository;
         _fundRepository = fundRepository;
+        _repaymentService = repaymentService;
         _auditLog = auditLog;
     }
 
@@ -120,34 +131,74 @@ public class DisbursementService
         }
 
         latest.VerifyAndActivate(result.ProviderReference!);
+
+        // The member's subaccount is how a disbursement is settled to them after
+        // the Guarantor's payment is confirmed (ADR-044). Create it once per
+        // verified recipient so every eligible member has a settlement path.
+        if (string.IsNullOrWhiteSpace(latest.ProviderSubaccountCode))
+        {
+            var subaccount = await provider.CreateSubaccountAsync(new CreateSubaccountRequest
+            {
+                Provider = latest.Provider,
+                BankCode = latest.BankCode,
+                AccountNumber = latest.AccountNumber,
+                AccountName = latest.AccountName,
+            }, ct);
+
+            if (!subaccount.Success || string.IsNullOrWhiteSpace(subaccount.ProviderReference))
+            {
+                throw new InvalidPaymentException($"A settlement subaccount could not be created for these bank details: {subaccount.RejectionReason ?? "unknown error"}.");
+            }
+
+            latest.AttachSubaccount(subaccount.ProviderReference);
+        }
+
         await _auditLog.RecordAsync(memberId, "PaymentRecipient.Verified", "PaymentRecipient", latest.Id,
-            "Recipient verified with provider", ct);
+            "Recipient and settlement subaccount verified with provider", ct);
         await _paymentRepository.SaveChangesAsync(ct);
 
         return ToRecipientDto(latest);
     }
 
     /// <summary>
-    /// Guarantor initiates disbursement of an approved loan to the member's
-    /// active recipient. Creates a Pending disbursement transaction and moves
-    /// the loan to DISBURSEMENT_PENDING. Final status is established by webhook.
+    /// Guarantor initiates disbursement of an approved loan. There is no
+    /// pre-funded pool: this starts a collection for the gross amount
+    /// (approved amount + provider fee) from the Guarantor, split to the
+    /// member's settlement subaccount so the member receives the approved
+    /// amount. Returns the provider checkout URL; the loan moves to
+    /// DISBURSEMENT_PENDING until the payment is confirmed.
     /// </summary>
     public async Task<DisbursementDto> InitiateDisbursementAsync(
         Guid guarantorId,
         InitiateDisbursementRequest request,
+        string payerEmail,
+        string? callbackUrl = null,
         CancellationToken ct = default)
     {
+        if (string.IsNullOrWhiteSpace(payerEmail))
+        {
+            throw new InvalidPaymentException("A contact email is required to pay for a disbursement.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(callbackUrl)
+            && (!Uri.TryCreate(callbackUrl, UriKind.Absolute, out var cb)
+                || (cb.Scheme != Uri.UriSchemeHttps && cb.Scheme != Uri.UriSchemeHttp)))
+        {
+            throw new InvalidPaymentException("The payment return address must be a valid http(s) URL.");
+        }
+
         var loan = await _loanRepository.GetByIdAsync(request.LoanId, ct)
             ?? throw new InvalidPaymentException("Loan not found.");
 
-        // Prevent double initiation regardless of the application's state.
+        // A disbursement already in progress cannot be started again. A failed
+        // Guarantor payment leaves a recoverable disbursement that may be retried.
         var existing = await _paymentRepository.GetByLoanAsync(loan.Id, ct);
-        if (existing is not null)
+        if (existing is not null && existing.Status != DisbursementStatus.Failed)
         {
             throw new InvalidPaymentException("A disbursement for this loan has already been initiated.");
         }
 
-        if (loan.Status != LoanStatus.Approved)
+        if (loan.Status != LoanStatus.Approved && loan.Status != LoanStatus.DisbursementPending)
         {
             throw new InvalidPaymentException("Only approved loans can be disbursed.");
         }
@@ -166,49 +217,97 @@ public class DisbursementService
             throw new InvalidPaymentException("The member does not have a verified bank recipient yet.");
         }
 
+        if (string.IsNullOrWhiteSpace(recipient.ProviderSubaccountCode))
+        {
+            throw new InvalidPaymentException("The member does not have a settlement subaccount yet. Ask them to re-verify their bank details.");
+        }
+
         var provider = _providerRegistry.Get(recipient.Provider)
             ?? throw new InvalidPaymentException($"Payment provider '{recipient.Provider}' is not available.");
 
         var disbursedAmount = loan.ApprovedAmount ?? loan.RequestedAmount;
-        var idempotencyKey = Guid.NewGuid().ToString("N");
-        var reference = $"FTF-{loan.Id:N}"[..20];
 
-        var result = await provider.InitiateTransferAsync(new InitiateTransferRequest
+        // The Guarantor pays the gross amount whose net (gross minus provider
+        // fee) equals the approved amount, so the collection split settles the
+        // member's subaccount exactly the approved amount and the platform
+        // retains the fee (ADR-044). Provider charges apply to the gross, so the
+        // gross is solved rather than sized with a fee calculated on the
+        // approved amount, then rounded up to the nearest whole naira. The
+        // provider's fee at confirmation remains authoritative and reconciles
+        // the recorded net (AmountNet).
+        var gross = decimal.Ceiling(CapitalTransaction.ComputeGrossForNet(disbursedAmount));
+        var estimatedFee = gross - disbursedAmount;
+
+        var idempotencyKey = Guid.NewGuid().ToString("N");
+        var reference = $"CAP-{loan.Id:N}"[..20];
+
+        var collection = await provider.InitializeCollectionAsync(new CollectionInitiationRequest
         {
             Provider = recipient.Provider,
-            ProviderRecipientCode = recipient.ProviderRecipientCode,
-            Amount = disbursedAmount,
+            Email = payerEmail,
+            Amount = gross,
             Reference = reference,
-            IdempotencyKey = idempotencyKey,
+            CallbackUrl = callbackUrl,
+            SubaccountCode = recipient.ProviderSubaccountCode,
+            TransactionCharge = estimatedFee,
+            Bearer = "account",
         }, ct);
 
-        if (!result.Success || string.IsNullOrWhiteSpace(result.ProviderReference))
+        if (!collection.Success || string.IsNullOrWhiteSpace(collection.ProviderReference) || string.IsNullOrWhiteSpace(collection.AuthorizationUrl))
         {
-            throw new InvalidPaymentException($"Disbursement could not be initiated: {result.RejectionReason ?? "unknown error"}.");
+            throw new InvalidPaymentException($"Disbursement payment could not be initiated: {collection.RejectionReason ?? "unknown error"}.");
         }
 
-        var transaction = DisbursementTransaction.Initiate(
+        // Per-loan capital payment: exactly this loan's Guarantor funding.
+        var capital = CapitalTransaction.Create(
+            fund.Id,
             loan.Id,
-            recipient.Id,
-            disbursedAmount,
-            result.ProviderReference,
-            idempotencyKey);
+            guarantorId,
+            recipient.Provider,
+            gross,
+            collection.ProviderReference);
+        capital.SetAuthorizationUrl(collection.AuthorizationUrl);
+        _capitalFundingRepository.Add(capital);
 
-        _paymentRepository.AddDisbursement(transaction);
-        loan.MarkDisbursementPending();
+        // The disbursement settlement record. On retry after a failed payment,
+        // reuse the existing record with the new collection reference.
+        DisbursementTransaction transaction;
+        if (existing is not null && existing.Status == DisbursementStatus.Failed)
+        {
+            existing.ResetForRetry(collection.ProviderReference, idempotencyKey);
+            transaction = existing;
+        }
+        else
+        {
+            transaction = DisbursementTransaction.Initiate(
+                loan.Id,
+                recipient.Id,
+                disbursedAmount,
+                collection.ProviderReference,
+                idempotencyKey);
+            _paymentRepository.AddDisbursement(transaction);
+        }
+
+        if (loan.Status == LoanStatus.Approved)
+        {
+            loan.MarkDisbursementPending();
+        }
 
         await _auditLog.RecordAsync(guarantorId, "Disbursement.Initiated", "Loan", loan.Id,
-            $"Amount={disbursedAmount}, ProviderRef={result.ProviderReference}", ct);
+            $"Amount={disbursedAmount}, Gross={gross:N2}, Fee={estimatedFee:N2}, ProviderRef={collection.ProviderReference}", ct);
         await _paymentRepository.SaveChangesAsync(ct);
+        await _capitalFundingRepository.SaveChangesAsync(ct);
 
-        return ToDisbursementDto(transaction);
+        return ToDisbursementDto(transaction, capital);
     }
 
     /// <summary>
-    /// Processes a provider webhook event. Idempotent: duplicate events for the
-    /// same transaction are ignored. A success marks the loan DISBURSED; a
-    /// failure/reversal is recorded explicitly and the loan is left in a
-    /// recoverable state.
+    /// Processes a provider collection event (charge.success / charge.failed).
+    /// Idempotent: duplicate events for the same transaction are ignored. A
+    /// success confirms the Guarantor's payment and marks the loan DISBURSED
+    /// (the member is settled through their subaccount); a failure is recorded
+    /// explicitly and the loan is left in a recoverable DISBURSEMENT_PENDING
+    /// state so the Guarantor can retry.
     /// </summary>
     public async Task<DisbursementDto?> ProcessProviderWebhookAsync(
         string provider,
@@ -225,7 +324,7 @@ public class DisbursementService
         }
 
         var transaction = await _paymentRepository.GetByProviderReferenceAsync(providerReference, ct)
-            ?? throw new InvalidPaymentException("Unknown provider transfer reference.");
+            ?? throw new InvalidPaymentException("Unknown provider payment reference.");
 
         var applied = transaction.ApplyProviderEvent(eventId, status, detail);
         if (!applied)
@@ -233,7 +332,8 @@ public class DisbursementService
             return null;
         }
 
-        // On success, mark the loan disbursed (only if still pending).
+        // On success, mark the loan disbursed (only if still pending) and ensure
+        // its repayment schedule exists so members can repay immediately.
         if (status == DisbursementStatus.Successful)
         {
             var loan = await _loanRepository.GetByIdAsync(transaction.LoanId, ct);
@@ -242,6 +342,8 @@ public class DisbursementService
                 loan.MarkDisbursed();
                 await _auditLog.RecordAsync(SystemActorId, "Disbursement.Succeeded", "Loan", loan.Id,
                     $"Amount={transaction.Amount}, ProviderRef={providerReference}", ct);
+
+                await _repaymentService.EnsureScheduleAsync(SystemActorId, loan.Id, ct);
             }
         }
         else
@@ -254,16 +356,53 @@ public class DisbursementService
         return ToDisbursementDto(transaction);
     }
 
+    /// <summary>
+    /// Finalises the disbursement linked to a Guarantor's collection
+    /// (charge.success / charge.failed webhook). This is the production
+    /// confirmation path for "pay per disbursement" (ADR-044): a successful
+    /// charge marks the loan DISBURSED, a failed charge leaves it in a
+    /// recoverable DISBURSEMENT_PENDING state for retry. Returns null when no
+    /// disbursement is linked to the reference, so a standalone capital payment
+    /// is not treated as an error. Idempotent with the dev-only verify endpoint.
+    /// </summary>
+    public async Task<DisbursementDto?> FinaliseDisbursementForChargeAsync(
+        string eventId,
+        string providerReference,
+        bool chargePaid,
+        string? detail = null,
+        CancellationToken ct = default)
+    {
+        var transaction = await _paymentRepository.GetByProviderReferenceAsync(providerReference, ct);
+        if (transaction is null)
+        {
+            return null;
+        }
+
+        return await ProcessProviderWebhookAsync(
+            DefaultProvider,
+            eventId,
+            providerReference,
+            chargePaid ? DisbursementStatus.Successful : DisbursementStatus.Failed,
+            detail,
+            ct);
+    }
+
     public async Task<PaymentRecipientDto?> GetRecipientForMemberAsync(Guid memberId, CancellationToken ct = default)
     {
-        var active = await _paymentRepository.GetActiveRecipientForMemberAsync(memberId, ct);
-        return active is null ? null : ToRecipientDto(active);
+        var latest = await _paymentRepository.GetLatestRecipientForMemberAsync(memberId, ct);
+        return latest is null ? null : ToRecipientDto(latest);
     }
 
     public async Task<DisbursementDto?> GetDisbursementForLoanAsync(Guid loanId, CancellationToken ct = default)
     {
         var transaction = await _paymentRepository.GetByLoanAsync(loanId, ct);
-        return transaction is null ? null : ToDisbursementDto(transaction);
+        if (transaction is null)
+        {
+            return null;
+        }
+
+        var capital = await _capitalFundingRepository.GetByProviderReferenceAsync(transaction.ProviderReference, ct);
+        return ToDisbursementDto(transaction, capital);
     }
 
     private static PaymentRecipientDto ToRecipientDto(PaymentRecipient r) => new()
@@ -290,7 +429,9 @@ public class DisbursementService
         return "•••• " + digits[^4..];
     }
 
-    private static DisbursementDto ToDisbursementDto(DisbursementTransaction t) => new()
+    private static DisbursementDto ToDisbursementDto(DisbursementTransaction t) => ToDisbursementDto(t, null);
+
+    private static DisbursementDto ToDisbursementDto(DisbursementTransaction t, CapitalTransaction? capital) => new()
     {
         Id = t.Id,
         LoanId = t.LoanId,
@@ -302,5 +443,9 @@ public class DisbursementService
         FailureReason = t.FailureReason,
         InitiatedAtUtc = t.InitiatedAtUtc,
         CompletedAtUtc = t.CompletedAtUtc,
+        AuthorizationUrl = capital?.AuthorizationUrl,
+        GrossAmount = capital?.AmountGross,
+        EstimatedFee = capital?.ProviderFee,
+        CapitalTransactionId = capital?.Id,
     };
 }

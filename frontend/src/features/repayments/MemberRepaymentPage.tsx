@@ -1,21 +1,24 @@
 import { useState } from 'react'
-import { Wallet, HandCoins, ArrowDownCircle, BadgeCheck } from 'lucide-react'
+import { Wallet, HandCoins, ArrowDownCircle, BadgeCheck, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useMyLoans } from '../loans/loanApi'
 import {
   useScheduleItems,
   useRepaymentSummary,
-  useRepaymentHistory,
-  useMakeScheduledPayment,
-  useMakeLumpSum,
-  useSettleLoan,
+  useMyPendingRepayments,
+  useMyRepaymentHistory,
+  useDeclareRepayment,
 } from './repaymentApi'
+import type { RepaymentKind } from './repaymentApi'
 import { PageHeader } from '../../components/ui/PageHeader'
 import { Card } from '../../components/ui/Card'
 import { KpiCard } from '../../components/ui/KpiCard'
 import { Button } from '../../components/ui/Button'
 import { StatusBadge } from '../../components/ui/Badge'
+import { AmountInput } from '../../components/ui/AmountInput'
 import { EmptyState, SkeletonCard } from '../../components/ui/State'
 import { MoneyDisplay } from '../../lib/money'
+import { formatShortDate, formatShortDateTime } from '../../lib/formatDate'
+import { EvidenceUpload } from '../evidence/EvidenceUpload'
 
 export function MemberRepaymentPage() {
   const { data: loans, isLoading } = useMyLoans()
@@ -26,26 +29,37 @@ export function MemberRepaymentPage() {
 
   const { data: schedule, isLoading: loadingSchedule } = useScheduleItems(selectedId ?? null)
   const { data: summary, isLoading: loadingSummary } = useRepaymentSummary(selectedId ?? null)
-  const { data: history } = useRepaymentHistory(selectedId ?? null)
+  const { data: pendingMine } = useMyPendingRepayments()
+  const declare = useDeclareRepayment()
+
+  const pendingForLoan = (pendingMine ?? []).filter(
+    (p) => p.loanId === selectedId && p.status !== 'Confirmed',
+  )
 
   const [amount, setAmount] = useState('')
-  const pay = useMakeScheduledPayment()
-  const lump = useMakeLumpSum()
-  const settle = useSettleLoan()
+  const [kind, setKind] = useState<RepaymentKind>('Scheduled')
+  const [reference, setReference] = useState('')
+  const [note, setNote] = useState('')
 
   const amountNumber = Number(amount) || 0
-  const loan = loans?.find((l) => l.id === selectedId)
 
-  const selectedLoanError =
-    pay.error || lump.error || settle.error
-      ? ((pay.error || lump.error || settle.error) as Error).message
-      : null
+  function submit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!selectedId || amountNumber <= 0) return
+    declare.mutate({
+      loanId: selectedId,
+      amount: amountNumber,
+      kind,
+      reference: reference.trim() || null,
+      note: note.trim() || null,
+    })
+  }
 
   return (
     <div>
       <PageHeader
         title="Repayments"
-        subtitle="View your repayment schedule, make payments, or settle your loan early."
+        subtitle="Report a payment so your Guarantor can confirm it against your loan."
       />
 
       {isLoading && <SkeletonCard />}
@@ -55,7 +69,7 @@ export function MemberRepaymentPage() {
           <EmptyState
             icon={<HandCoins size={24} />}
             title="No active loans"
-            description="You have no disbursed loans with an outstanding repayment schedule."
+            description="You have no disbursed loans with an outstanding repayment schedule. Your past payments are listed below."
           />
         </Card>
       ) : (
@@ -79,7 +93,7 @@ export function MemberRepaymentPage() {
               </select>
             </div>
 
-            {selectedLoanError && <p className="error-text">{selectedLoanError}</p>}
+            {declare.error && <p className="error-text">{(declare.error as Error).message}</p>}
 
             {loadingSummary && <SkeletonCard />}
 
@@ -126,7 +140,8 @@ export function MemberRepaymentPage() {
                 {loadingSchedule ? (
                   <SkeletonCard />
                 ) : schedule && schedule.length > 0 ? (
-                  <table className="data-table">
+                  <div className="table-scroll">
+                    <table className="data-table">
                     <thead>
                       <tr>
                         <th>#</th>
@@ -141,7 +156,7 @@ export function MemberRepaymentPage() {
                         <tr key={item.id}>
                           <td>{item.sequence}</td>
                           <td className="cell-secondary">
-                            {new Date(item.dueDateUtc).toLocaleDateString()}
+                            {formatShortDate(item.dueDateUtc)}
                           </td>
                           <td>
                             <MoneyDisplay amount={item.expectedAmount} />
@@ -156,6 +171,7 @@ export function MemberRepaymentPage() {
                       ))}
                     </tbody>
                   </table>
+                  </div>
                 ) : (
                   <EmptyState
                     icon={<HandCoins size={20} />}
@@ -166,120 +182,233 @@ export function MemberRepaymentPage() {
               </Card>
 
               <div className="stack" style={{ gap: 20 }}>
-                <Card title="Make a payment">
-                  <div className="field">
-                    <label htmlFor="repay-amount">Amount (₦)</label>
-                    <input
-                      id="repay-amount"
-                      type="number"
-                      min="0"
-                      value={amount}
-                      onChange={(e) => setAmount(e.target.value)}
-                      placeholder="0.00"
-                    />
-                  </div>
-                  <div className="row" style={{ gap: 12, marginTop: 8 }}>
-                    <Button
-                      disabled={amountNumber <= 0 || !selectedId}
-                      onClick={() =>
-                        selectedId &&
-                        pay.mutate({ loanId: selectedId, amount: amountNumber })
-                      }
-                    >
-                      Pay Instalment
+                <Card title="Report a payment">
+                  <p className="muted">
+                    Report the payment you made to your Guarantor. Your repayment is
+                    recorded only after they confirm it.
+                  </p>
+                  <form onSubmit={submit}>
+                    <div className="field">
+                      <label htmlFor="repay-kind">Payment type</label>
+                      <select
+                        id="repay-kind"
+                        value={kind}
+                        onChange={(e) => setKind(e.target.value as RepaymentKind)}
+                      >
+                        <option value="Scheduled">Instalment</option>
+                        <option value="LumpSum">Lump sum</option>
+                        <option value="FullSettlement">Full settlement</option>
+                      </select>
+                    </div>
+
+                    <div className="field">
+                      <label htmlFor="repay-amount">Amount (₦)</label>
+                      <AmountInput
+                        id="repay-amount"
+                        value={amount}
+                        onChange={setAmount}
+                        placeholder={
+                          kind === 'FullSettlement'
+                            ? String(summary?.settlementQuote ?? 0)
+                            : '0.00'
+                        }
+                        required
+                      />
+                      {kind === 'FullSettlement' && summary ? (
+                        <p className="field-hint">
+                          Current settlement quote:{' '}
+                          <MoneyDisplay amount={summary.settlementQuote} />
+                        </p>
+                      ) : null}
+                    </div>
+
+                    <div className="field">
+                      <label htmlFor="repay-reference">Reference (optional)</label>
+                      <input
+                        id="repay-reference"
+                        value={reference}
+                        onChange={(e) => setReference(e.target.value)}
+                        placeholder="e.g. bank transfer reference"
+                      />
+                    </div>
+
+                    <div className="field">
+                      <label htmlFor="repay-note">Note (optional)</label>
+                      <textarea
+                        id="repay-note"
+                        value={note}
+                        onChange={(e) => setNote(e.target.value)}
+                        rows={2}
+                        placeholder="Anything your Guarantor should know"
+                      />
+                    </div>
+
+                    <Button type="submit" disabled={amountNumber <= 0 || !selectedId || declare.isPending}>
+                      {declare.isPending ? 'Submitting…' : 'Report payment'}
                     </Button>
-                    <Button
-                      variant="secondary"
-                      disabled={amountNumber <= 0 || !selectedId}
-                      onClick={() =>
-                        selectedId &&
-                        lump.mutate({ loanId: selectedId, amount: amountNumber })
-                      }
-                    >
-                      Lump Sum
-                    </Button>
-                  </div>
-                  {pay.isPending || lump.isPending ? (
-                    <p className="muted" style={{ marginTop: 8 }}>
-                      Processing…
-                    </p>
-                  ) : null}
+                  </form>
                 </Card>
 
-                <Card title="Settle loan">
-                  <p className="muted">
-                    Settling pays the full outstanding balance in one payment and
-                    completes your loan. If you pay more than the quote, the
-                    difference is recorded as repayment surplus.
-                  </p>
-                  <div className="row" style={{ gap: 12, marginTop: 12 }}>
-                    <Button
-                      variant="secondary"
-                      disabled={!selectedId}
-                      onClick={() =>
-                        selectedId && summary &&
-                        settle.mutate({ loanId: selectedId, amount: summary.settlementQuote })
-                      }
-                    >
-                      Settle now
-                    </Button>
-                  </div>
-                  {loan?.status === 'Disbursed' && summary ? (
-                    <p className="muted" style={{ marginTop: 8 }}>
-                      Quote: <MoneyDisplay amount={summary.settlementQuote} />
-                    </p>
-                  ) : null}
+                <Card title="Awaiting confirmation">
+                  {pendingForLoan.length > 0 ? (
+                    <div className="stack">
+                      {pendingForLoan.map((p) => (
+                        <div key={p.id} className="card">
+                          <p>
+                            <strong>
+                              <MoneyDisplay amount={p.amount} />
+                            </strong>
+                          </p>
+                          <StatusBadge status={p.status} withDot />
+                          <ul className="property-list" style={{ marginTop: 8 }}>
+                            <li>
+                              <span className="property-label">Type</span>
+                              <span className="property-value">{p.kind}</span>
+                            </li>
+                            {p.reference && (
+                              <li>
+                                <span className="property-label">Reference</span>
+                                <span className="property-value">{p.reference}</span>
+                              </li>
+                            )}
+                            <li>
+                              <span className="property-label">Reported</span>
+                              <span className="property-value">
+                                {formatShortDateTime(p.reportedAtUtc)}
+                              </span>
+                            </li>
+                          </ul>
+                          <div style={{ marginTop: 12 }}>
+                            <EvidenceUpload
+                              resourceType="repayment"
+                              resourceId={p.id}
+                              hasEvidence={p.hasEvidence}
+                            />
+                          </div>
+                          {p.rejectionReason && (
+                            <p className="form-error" style={{ marginTop: 8 }}>
+                              Rejected: {p.rejectionReason}
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <EmptyState
+                      icon={<BadgeCheck size={20} />}
+                      title="Nothing pending"
+                      description="Report a payment above; your Guarantor will confirm it here."
+                    />
+                  )}
                 </Card>
               </div>
-            </div>
-
-            <div style={{ marginTop: 24 }}>
-              <Card title="Payment history">
-                {history && history.length > 0 ? (
-                  <table className="data-table">
-                    <thead>
-                      <tr>
-                        <th>Date</th>
-                        <th>Kind</th>
-                        <th>Expected</th>
-                        <th>Actual</th>
-                        <th>Surplus</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {history.map((r) => (
-                        <tr key={r.id}>
-                          <td className="cell-secondary">
-                            {new Date(r.paidAtUtc).toLocaleString()}
-                          </td>
-                          <td>
-                            <StatusBadge status={r.kind} withDot />
-                          </td>
-                          <td>
-                            <MoneyDisplay amount={r.expectedAmount} />
-                          </td>
-                          <td>
-                            <MoneyDisplay amount={r.actualAmount} />
-                          </td>
-                          <td>
-                            <MoneyDisplay amount={r.surplus} />
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                ) : (
-                  <EmptyState
-                    icon={<Wallet size={20} />}
-                    title="No payments yet"
-                    description="Payments you make will appear here."
-                  />
-                )}
-              </Card>
             </div>
           </>
         )
       )}
+
+      <div style={{ marginTop: 24 }}>
+        <PaymentHistory />
+      </div>
     </div>
+  )
+}
+
+function PaymentHistory() {
+  const pageSize = 10
+  const [page, setPage] = useState(1)
+  const { data, isLoading, error } = useMyRepaymentHistory(page, pageSize)
+
+  const totalPages = data ? Math.max(1, Math.ceil(data.totalCount / data.pageSize)) : 1
+
+  return (
+    <Card title="Payment history">
+      {isLoading && <SkeletonCard />}
+      {error && <p className="error-text">{(error as Error).message}</p>}
+
+      {data && data.totalCount > 0 ? (
+        <>
+          <div className="table-scroll">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Fund</th>
+                  <th>Kind</th>
+                  <th>Expected</th>
+                  <th>Actual</th>
+                  <th>Surplus</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.items.map((r) => (
+                  <tr key={r.id}>
+                    <td className="cell-secondary">{formatShortDateTime(r.paidAtUtc)}</td>
+                    <td>{r.fundName || <span className="cell-secondary">—</span>}</td>
+                    <td>
+                      <StatusBadge status={r.kind} withDot />
+                    </td>
+                    <td>
+                      <MoneyDisplay amount={r.expectedAmount} />
+                    </td>
+                    <td>
+                      <MoneyDisplay amount={r.actualAmount} />
+                    </td>
+                    <td>
+                      <MoneyDisplay amount={r.surplus} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 12,
+              flexWrap: 'wrap',
+              marginTop: 12,
+            }}
+          >
+            <p className="muted" style={{ fontSize: 13 }}>
+              {data.totalCount} confirmed payment{data.totalCount === 1 ? '' : 's'}
+            </p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={page <= 1 || isLoading}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              >
+                <ChevronLeft size={14} /> Previous
+              </Button>
+              <span className="muted" style={{ fontSize: 13, minWidth: 72, textAlign: 'center' }}>
+                Page {data.page} of {totalPages}
+              </span>
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={page >= totalPages || isLoading}
+                onClick={() => setPage((p) => p + 1)}
+              >
+                Next <ChevronRight size={14} />
+              </Button>
+            </div>
+          </div>
+        </>
+      ) : (
+        !isLoading &&
+        !error && (
+          <EmptyState
+            icon={<Wallet size={20} />}
+            title="No payments yet"
+            description="Payments your Guarantor has confirmed will appear here."
+          />
+        )
+      )}
+    </Card>
   )
 }

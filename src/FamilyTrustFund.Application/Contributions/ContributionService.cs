@@ -1,7 +1,9 @@
 using FamilyTrustFund.Application.Audit;
+using FamilyTrustFund.Application.Evidence;
 using FamilyTrustFund.Application.Funds;
 using FamilyTrustFund.Application.Membership;
 using FamilyTrustFund.Domain.Contributions;
+using FamilyTrustFund.Domain.Evidence;
 using FamilyTrustFund.Domain.Financial;
 using FamilyTrustFund.Domain.Funds;
 using FamilyTrustFund.Domain.Membership;
@@ -17,17 +19,20 @@ public class ContributionService
     private readonly IContributionRepository _contributionRepository;
     private readonly IFundRepository _fundRepository;
     private readonly IMembershipRepository _membershipRepository;
+    private readonly IEvidenceRepository _evidenceRepository;
     private readonly IAuditLog _auditLog;
 
     public ContributionService(
         IContributionRepository contributionRepository,
         IFundRepository fundRepository,
         IMembershipRepository membershipRepository,
+        IEvidenceRepository evidenceRepository,
         IAuditLog auditLog)
     {
         _contributionRepository = contributionRepository;
         _fundRepository = fundRepository;
         _membershipRepository = membershipRepository;
+        _evidenceRepository = evidenceRepository;
         _auditLog = auditLog;
     }
 
@@ -65,10 +70,10 @@ public class ContributionService
             throw new InvalidContributionException("You are not an active member of that fund.");
         }
 
-        if (await _contributionRepository.HasActiveDisbursedLoanAsync(memberId, fund.Id, ct))
+        if (await _contributionRepository.HasActiveDisbursedLoanAsync(memberId, ct))
         {
             throw new InvalidContributionException(
-                "You cannot contribute while you have an active loan in this fund. Complete the loan first.");
+                "You cannot contribute while you have any active loan. Complete it first.");
         }
 
         var contribution = FundContribution.Report(
@@ -83,7 +88,8 @@ public class ContributionService
             $"Amount={request.Amount}, Fund={fund.Name}", ct);
         await _contributionRepository.SaveChangesAsync(ct);
 
-        return ToDto(contribution, fund, memberDisplayName: string.Empty, memberEmail: string.Empty);
+        var dto = ToDto(contribution, fund, memberDisplayName: string.Empty, memberEmail: string.Empty);
+        return await WithHasEvidenceAsync(dto, ct);
     }
 
     /// <summary>
@@ -106,7 +112,7 @@ public class ContributionService
             }
 
             var fundCredit = await _contributionRepository.GetConfirmedFundCreditAsync(memberId, fund.Id, ct);
-            var hasActiveLoan = await _contributionRepository.HasActiveDisbursedLoanAsync(memberId, fund.Id, ct);
+            var hasActiveLoan = await _contributionRepository.HasActiveDisbursedLoanAsync(memberId, ct);
 
             results.Add(new ContributionSummaryDto
             {
@@ -131,7 +137,14 @@ public class ContributionService
         CancellationToken ct = default)
     {
         var items = await _contributionRepository.GetByMemberAsync(memberId, ct);
-        return items.Select(i => ToDto(i.Contribution, i.FundName, i.MemberDisplayName, i.MemberEmail)).ToList();
+        var results = new List<ContributionDto>();
+        foreach (var item in items)
+        {
+            results.Add(await WithHasEvidenceAsync(
+                ToDto(item.Contribution, item.FundName, item.MemberDisplayName, item.MemberEmail), ct));
+        }
+
+        return results;
     }
 
     /// <summary>
@@ -142,7 +155,14 @@ public class ContributionService
         CancellationToken ct = default)
     {
         var items = await _contributionRepository.GetPendingForGuarantorAsync(guarantorId, ct);
-        return items.Select(i => ToDto(i.Contribution, i.FundName, i.MemberDisplayName, i.MemberEmail)).ToList();
+        var results = new List<ContributionDto>();
+        foreach (var item in items)
+        {
+            results.Add(await WithHasEvidenceAsync(
+                ToDto(item.Contribution, item.FundName, item.MemberDisplayName, item.MemberEmail), ct));
+        }
+
+        return results;
     }
 
     /// <summary>
@@ -153,7 +173,14 @@ public class ContributionService
         CancellationToken ct = default)
     {
         var items = await _contributionRepository.GetByFundAsync(fundId, ct);
-        return items.Select(i => ToDto(i.Contribution, i.FundName, i.MemberDisplayName, i.MemberEmail)).ToList();
+        var results = new List<ContributionDto>();
+        foreach (var item in items)
+        {
+            results.Add(await WithHasEvidenceAsync(
+                ToDto(item.Contribution, item.FundName, item.MemberDisplayName, item.MemberEmail), ct));
+        }
+
+        return results;
     }
 
     /// <summary>
@@ -175,13 +202,17 @@ public class ContributionService
             throw new InvalidContributionException("You do not have permission to confirm this contribution.");
         }
 
-        contribution.Confirm();
+        contribution.Confirm(request.Note);
 
+        await MarkEvidenceReviewedAsync(contribution.Id, guarantorId, ct);
         await _auditLog.RecordAsync(guarantorId, "Contribution.Confirmed", "Contribution", contribution.Id,
-            $"Amount={contribution.Amount}", ct);
+            request.Note is not null
+                ? $"Amount={contribution.Amount}, Note={request.Note}"
+                : $"Amount={contribution.Amount}", ct);
         await _contributionRepository.SaveChangesAsync(ct);
 
-        return ToDto(contribution, fund, string.Empty, string.Empty);
+        var dto = ToDto(contribution, fund, string.Empty, string.Empty);
+        return await WithHasEvidenceAsync(dto, ct);
     }
 
     /// <summary>
@@ -206,11 +237,83 @@ public class ContributionService
 
         contribution.Reject(request.Reason);
 
+        await MarkEvidenceReviewedAsync(contribution.Id, guarantorId, ct);
         await _auditLog.RecordAsync(guarantorId, "Contribution.Rejected", "Contribution", contribution.Id,
             request.Reason is not null ? $"Reason={request.Reason}" : null, ct);
         await _contributionRepository.SaveChangesAsync(ct);
 
-        return ToDto(contribution, fund, string.Empty, string.Empty);
+        var dto = ToDto(contribution, fund, string.Empty, string.Empty);
+        return await WithHasEvidenceAsync(dto, ct);
+    }
+
+    /// <summary>
+    /// Returns a contribution only if it is owned by the given member; null
+    /// otherwise. Used to authorize member access to a single contribution and
+    /// its evidence.
+    /// </summary>
+    public async Task<ContributionDto?> GetContributionForOwnerAsync(
+        Guid contributionId,
+        Guid memberId,
+        CancellationToken ct = default)
+    {
+        var contribution = await _contributionRepository.GetByIdAsync(contributionId, ct);
+        if (contribution is null || contribution.MemberId != memberId)
+        {
+            return null;
+        }
+
+        var fund = await _fundRepository.GetByIdAsync(contribution.FundId, ct);
+        if (fund is null)
+        {
+            return null;
+        }
+
+        return await WithHasEvidenceAsync(ToDto(contribution, fund, string.Empty, string.Empty), ct);
+    }
+
+    /// <summary>
+    /// Returns a contribution only if it belongs to a fund owned by the given
+    /// Guarantor; null otherwise. Used to authorize Guarantor access to a
+    /// contribution and its evidence.
+    /// </summary>
+    public async Task<ContributionDto?> GetContributionForGuarantorAsync(
+        Guid contributionId,
+        Guid guarantorId,
+        CancellationToken ct = default)
+    {
+        var contribution = await _contributionRepository.GetByIdAsync(contributionId, ct);
+        if (contribution is null)
+        {
+            return null;
+        }
+
+        var fund = await _fundRepository.GetByIdAsync(contribution.FundId, ct);
+        if (fund is null || fund.GuarantorId != guarantorId)
+        {
+            return null;
+        }
+
+        return await WithHasEvidenceAsync(ToDto(contribution, fund, string.Empty, string.Empty), ct);
+    }
+
+    private async Task<ContributionDto> WithHasEvidenceAsync(ContributionDto dto, CancellationToken ct)
+    {
+        var evidence = await _evidenceRepository.GetForResourceAsync("Contribution", dto.Id, ct);
+        dto.HasEvidence = evidence.Count > 0;
+        return dto;
+    }
+
+    /// <summary>
+    /// Marks any evidence attached to a contribution as reviewed by the Guarantor
+    /// as part of confirming or rejecting the contribution.
+    /// </summary>
+    private async Task MarkEvidenceReviewedAsync(Guid contributionId, Guid reviewerId, CancellationToken ct)
+    {
+        var evidence = await _evidenceRepository.GetForResourceAsync("Contribution", contributionId, ct);
+        foreach (var item in evidence)
+        {
+            item.MarkReviewed(reviewerId);
+        }
     }
 
     private static ContributionDto ToDto(
@@ -230,6 +333,7 @@ public class ContributionService
         Reference = contribution.Reference,
         Note = contribution.Note,
         RejectionReason = contribution.RejectionReason,
+        ConfirmationNote = contribution.ConfirmationNote,
         ReportedAtUtc = contribution.ReportedAtUtc,
         ConfirmedAtUtc = contribution.ConfirmedAtUtc,
         RejectedAtUtc = contribution.RejectedAtUtc,
@@ -252,6 +356,7 @@ public class ContributionService
         Reference = contribution.Reference,
         Note = contribution.Note,
         RejectionReason = contribution.RejectionReason,
+        ConfirmationNote = contribution.ConfirmationNote,
         ReportedAtUtc = contribution.ReportedAtUtc,
         ConfirmedAtUtc = contribution.ConfirmedAtUtc,
         RejectedAtUtc = contribution.RejectedAtUtc,

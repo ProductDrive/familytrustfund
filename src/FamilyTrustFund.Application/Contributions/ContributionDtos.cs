@@ -26,6 +26,9 @@ public sealed class ReportContributionRequest
 public sealed class ConfirmContributionRequest
 {
     public Guid ContributionId { get; init; }
+
+    /// <summary>Optional free-text note added by the Guarantor on confirmation.</summary>
+    public string? Note { get; init; }
 }
 
 /// <summary>
@@ -65,7 +68,11 @@ public sealed class ContributionDto
     public string? Reference { get; init; }
     public string? Note { get; init; }
     public string? RejectionReason { get; init; }
+    public string? ConfirmationNote { get; init; }
     public DateTime ReportedAtUtc { get; init; }
     public DateTime? ConfirmedAtUtc { get; init; }
     public DateTime? RejectedAtUtc { get; init; }
+
+    /// <summary>Whether the member uploaded payment evidence for this contribution.</summary>
+    public bool HasEvidence { get; set; }
 }

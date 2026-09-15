@@ -66,10 +66,11 @@ public class LoanServiceTests
     [Fact]
     public async Task RequestLoan_valid_family_fund_creates_pending_loan()
     {
-        var (funds, members, loans, service) = Setup();
+        var (funds, members, loans, contributions, service) = SetupExposeContributions();
         var fund = CreateFamilyFund();
         funds.Funds.Add(fund);
         AddActiveMembership(members, fund.Id, MemberId);
+        contributions.ConfirmedFundCredits[(MemberId, fund.Id)] = 200_000m;
 
         var result = await service.RequestLoanAsync(MemberId, new RequestLoanRequest
         {
@@ -166,7 +167,12 @@ public class LoanServiceTests
         var fund = CreateFamilyFund();
         funds.Funds.Add(fund);
         AddActiveMembership(members, fund.Id, MemberId);
-        loans.ActiveDisbursedCounts[(MemberId, fund.Id)] = 1;
+
+        var existing = Loan.Request(fund.Id, MemberId, 80_000m, RepaymentFrequency.Monthly, 0m, LoanFundingSource.GuarantorCapital);
+        existing.Approve(GuarantorId, 80_000m, RepaymentFrequency.Monthly, 80_000m);
+        existing.MarkDisbursementPending();
+        existing.MarkDisbursed();
+        loans.Loans.Add(existing);
 
         var act = async () => await service.RequestLoanAsync(MemberId, new RequestLoanRequest
         {
@@ -180,12 +186,82 @@ public class LoanServiceTests
     }
 
     [Fact]
-    public async Task RequestLoan_pending_request_exists_throws()
+    public async Task RequestLoan_active_loan_in_other_fund_throws()
     {
-        var (funds, members, loans, service) = Setup();
+        var (funds, members, loans, contributions, service) = SetupExposeContributions();
+        var thisFund = CreateFamilyFund();
+        var otherFund = CreateFamilyFund();
+        funds.Funds.Add(thisFund);
+        funds.Funds.Add(otherFund);
+        AddActiveMembership(members, thisFund.Id, MemberId);
+        AddActiveMembership(members, otherFund.Id, MemberId);
+        // Active loan exists in a separate fund.
+        var existing = Loan.Request(otherFund.Id, MemberId, 80_000m, RepaymentFrequency.Monthly, 0m, LoanFundingSource.GuarantorCapital);
+        existing.Approve(GuarantorId, 80_000m, RepaymentFrequency.Monthly, 80_000m);
+        existing.MarkDisbursementPending();
+        existing.MarkDisbursed();
+        loans.Loans.Add(existing);
+        contributions.ConfirmedFundCredits[(MemberId, thisFund.Id)] = 200_000m;
+
+        var act = async () => await service.RequestLoanAsync(MemberId, new RequestLoanRequest
+        {
+            FundId = thisFund.Id,
+            Amount = 100_000m,
+            Frequency = RepaymentFrequency.Monthly,
+        });
+
+        await act.Should().ThrowAsync<InvalidLoanException>()
+            .WithMessage("*already have an active loan*");
+    }
+
+    [Fact]
+    public async Task RequestLoan_family_fund_without_contribution_throws()
+    {
+        var (funds, members, _, _, service) = SetupExposeContributions();
         var fund = CreateFamilyFund();
         funds.Funds.Add(fund);
         AddActiveMembership(members, fund.Id, MemberId);
+        // No confirmed Fund Credit for the member in this fund.
+
+        var act = async () => await service.RequestLoanAsync(MemberId, new RequestLoanRequest
+        {
+            FundId = fund.Id,
+            Amount = 100_000m,
+            Frequency = RepaymentFrequency.Monthly,
+        });
+
+        await act.Should().ThrowAsync<InvalidLoanException>()
+            .WithMessage("*contribute to this Family fund*");
+    }
+
+    [Fact]
+    public async Task RequestLoan_family_fund_with_contribution_allowed()
+    {
+        var (funds, members, loans, contributions, service) = SetupExposeContributions();
+        var fund = CreateFamilyFund();
+        funds.Funds.Add(fund);
+        AddActiveMembership(members, fund.Id, MemberId);
+        contributions.ConfirmedFundCredits[(MemberId, fund.Id)] = 200_000m;
+
+        var result = await service.RequestLoanAsync(MemberId, new RequestLoanRequest
+        {
+            FundId = fund.Id,
+            Amount = 100_000m,
+            Frequency = RepaymentFrequency.Monthly,
+        });
+
+        result.Status.Should().Be(LoanStatus.Pending);
+        loans.Loans.Should().ContainSingle(l => l.MemberId == MemberId);
+    }
+
+    [Fact]
+    public async Task RequestLoan_pending_request_exists_throws()
+    {
+        var (funds, members, loans, contributions, service) = SetupExposeContributions();
+        var fund = CreateFamilyFund();
+        funds.Funds.Add(fund);
+        AddActiveMembership(members, fund.Id, MemberId);
+        contributions.ConfirmedFundCredits[(MemberId, fund.Id)] = 200_000m;
         loans.PendingRequests.Add((MemberId, fund.Id));
 
         var act = async () => await service.RequestLoanAsync(MemberId, new RequestLoanRequest
@@ -200,12 +276,92 @@ public class LoanServiceTests
     }
 
     [Fact]
+    public async Task RequestLoan_pending_loan_in_other_fund_throws()
+    {
+        var (funds, members, loans, contributions, service) = SetupExposeContributions();
+        var thisFund = CreateFamilyFund();
+        var otherFund = CreateFamilyFund();
+        funds.Funds.Add(thisFund);
+        funds.Funds.Add(otherFund);
+        AddActiveMembership(members, thisFund.Id, MemberId);
+        AddActiveMembership(members, otherFund.Id, MemberId);
+        contributions.ConfirmedFundCredits[(MemberId, thisFund.Id)] = 200_000m;
+
+        // A pending (not yet approved) request in another fund still blocks.
+        var pending = Loan.Request(otherFund.Id, MemberId, 80_000m, RepaymentFrequency.Monthly, 0m, LoanFundingSource.GuarantorCapital);
+        loans.Loans.Add(pending);
+
+        var act = async () => await service.RequestLoanAsync(MemberId, new RequestLoanRequest
+        {
+            FundId = thisFund.Id,
+            Amount = 100_000m,
+            Frequency = RepaymentFrequency.Monthly,
+        });
+
+        await act.Should().ThrowAsync<InvalidLoanException>()
+            .WithMessage("*already have an active loan*");
+    }
+
+    [Fact]
+    public async Task RequestLoan_approved_loan_in_other_fund_throws()
+    {
+        var (funds, members, loans, contributions, service) = SetupExposeContributions();
+        var thisFund = CreateFamilyFund();
+        var otherFund = CreateFamilyFund();
+        funds.Funds.Add(thisFund);
+        funds.Funds.Add(otherFund);
+        AddActiveMembership(members, thisFund.Id, MemberId);
+        AddActiveMembership(members, otherFund.Id, MemberId);
+        contributions.ConfirmedFundCredits[(MemberId, thisFund.Id)] = 200_000m;
+
+        // An approved-but-not-disbursed loan anywhere blocks a new request.
+        var approved = Loan.Request(otherFund.Id, MemberId, 80_000m, RepaymentFrequency.Monthly, 0m, LoanFundingSource.GuarantorCapital);
+        approved.Approve(GuarantorId, 80_000m, RepaymentFrequency.Monthly, 80_000m);
+        loans.Loans.Add(approved);
+
+        var act = async () => await service.RequestLoanAsync(MemberId, new RequestLoanRequest
+        {
+            FundId = thisFund.Id,
+            Amount = 100_000m,
+            Frequency = RepaymentFrequency.Monthly,
+        });
+
+        await act.Should().ThrowAsync<InvalidLoanException>()
+            .WithMessage("*already have an active loan*");
+    }
+
+    [Fact]
+    public async Task RequestLoan_cancelled_loan_does_not_block()
+    {
+        var (funds, members, loans, contributions, service) = SetupExposeContributions();
+        var fund = CreateFamilyFund();
+        funds.Funds.Add(fund);
+        AddActiveMembership(members, fund.Id, MemberId);
+        contributions.ConfirmedFundCredits[(MemberId, fund.Id)] = 200_000m;
+
+        // A cancelled loan is terminal and must not block a fresh request.
+        var cancelled = Loan.Request(fund.Id, MemberId, 80_000m, RepaymentFrequency.Monthly, 0m, LoanFundingSource.GuarantorCapital);
+        cancelled.CancelByMember(MemberId);
+        loans.Loans.Add(cancelled);
+
+        var result = await service.RequestLoanAsync(MemberId, new RequestLoanRequest
+        {
+            FundId = fund.Id,
+            Amount = 100_000m,
+            Frequency = RepaymentFrequency.Monthly,
+        });
+
+        result.Status.Should().Be(LoanStatus.Pending);
+    }
+
+    [Fact]
     public async Task RequestLoan_exceeds_capacity_throws()
     {
-        var (funds, members, loans, service) = Setup();
+        var (funds, members, loans, contributions, service) = SetupExposeContributions();
         var fund = CreateFamilyFund(committedCapital: 100_000m);
         funds.Funds.Add(fund);
         AddActiveMembership(members, fund.Id, MemberId);
+        contributions.ConfirmedFundCredits[(MemberId, fund.Id)] = 200_000m;
         loans.DisbursedTotals[fund.Id] = 90_000m;
 
         var act = async () => await service.RequestLoanAsync(MemberId, new RequestLoanRequest
@@ -379,7 +535,119 @@ public class LoanServiceTests
     }
 
     [Fact]
-    public async Task RequestLoan_records_audit_event()
+    public async Task CancelLoanByMember_cancels_pending_request()
+    {
+        var (funds, members, loans, service) = Setup();
+        var fund = CreateFamilyFund();
+        funds.Funds.Add(fund);
+        AddActiveMembership(members, fund.Id, MemberId);
+
+        var loan = Loan.Request(fund.Id, MemberId, 100m, RepaymentFrequency.Weekly, 0m, LoanFundingSource.GuarantorCapital);
+        loans.Loans.Add(loan);
+
+        var result = await service.CancelLoanByMemberAsync(MemberId, loan.Id);
+
+        result.Status.Should().Be(LoanStatus.Cancelled);
+        result.CancelledAtUtc.Should().NotBeNull();
+        loan.Status.Should().Be(LoanStatus.Cancelled);
+    }
+
+    [Fact]
+    public async Task CancelLoanByMember_non_owner_throws()
+    {
+        var (funds, members, loans, service) = Setup();
+        var fund = CreateFamilyFund();
+        funds.Funds.Add(fund);
+        AddActiveMembership(members, fund.Id, MemberId);
+
+        var loan = Loan.Request(fund.Id, MemberId, 100m, RepaymentFrequency.Weekly, 0m, LoanFundingSource.GuarantorCapital);
+        loans.Loans.Add(loan);
+
+        var act = async () => await service.CancelLoanByMemberAsync(Guid.NewGuid(), loan.Id);
+
+        await act.Should().ThrowAsync<InvalidLoanException>()
+            .WithMessage("*own loan request*");
+    }
+
+    [Fact]
+    public async Task CancelLoanByMember_approved_loan_throws()
+    {
+        var (funds, members, loans, service) = Setup();
+        var fund = CreateFamilyFund();
+        funds.Funds.Add(fund);
+        AddActiveMembership(members, fund.Id, MemberId);
+
+        var loan = Loan.Request(fund.Id, MemberId, 100m, RepaymentFrequency.Weekly, 0m, LoanFundingSource.GuarantorCapital);
+        loan.Approve(GuarantorId, 100m, RepaymentFrequency.Weekly, 100m);
+        loans.Loans.Add(loan);
+
+        var act = async () => await service.CancelLoanByMemberAsync(MemberId, loan.Id);
+
+        await act.Should().ThrowAsync<InvalidLoanException>()
+            .WithMessage("*pending loan request*");
+    }
+
+    [Fact]
+    public async Task CancelLoanByGuarantor_cancels_pending_and_approved()
+    {
+        var (funds, members, loans, service) = Setup();
+        var fund = CreateFamilyFund();
+        funds.Funds.Add(fund);
+        AddActiveMembership(members, fund.Id, MemberId);
+
+        var pending = Loan.Request(fund.Id, MemberId, 100m, RepaymentFrequency.Weekly, 0m, LoanFundingSource.GuarantorCapital);
+        loans.Loans.Add(pending);
+
+        var approved = Loan.Request(fund.Id, MemberId, 200m, RepaymentFrequency.Weekly, 0m, LoanFundingSource.GuarantorCapital);
+        approved.Approve(GuarantorId, 200m, RepaymentFrequency.Weekly, 200m);
+        loans.Loans.Add(approved);
+
+        var pendingResult = await service.CancelLoanByGuarantorAsync(GuarantorId, pending.Id);
+        var approvedResult = await service.CancelLoanByGuarantorAsync(GuarantorId, approved.Id);
+
+        pendingResult.Status.Should().Be(LoanStatus.Cancelled);
+        approvedResult.Status.Should().Be(LoanStatus.Cancelled);
+    }
+
+    [Fact]
+    public async Task CancelLoanByGuarantor_non_owner_throws()
+    {
+        var (funds, members, loans, service) = Setup();
+        var fund = CreateFamilyFund();
+        funds.Funds.Add(fund);
+        AddActiveMembership(members, fund.Id, MemberId);
+
+        var loan = Loan.Request(fund.Id, MemberId, 100m, RepaymentFrequency.Weekly, 0m, LoanFundingSource.GuarantorCapital);
+        loans.Loans.Add(loan);
+
+        var act = async () => await service.CancelLoanByGuarantorAsync(Guid.NewGuid(), loan.Id);
+
+        await act.Should().ThrowAsync<InvalidLoanException>()
+            .WithMessage("*permission to cancel*");
+    }
+
+    [Fact]
+    public async Task CancelLoanByGuarantor_disbursed_loan_throws()
+    {
+        var (funds, members, loans, service) = Setup();
+        var fund = CreateFamilyFund();
+        funds.Funds.Add(fund);
+        AddActiveMembership(members, fund.Id, MemberId);
+
+        var loan = Loan.Request(fund.Id, MemberId, 100m, RepaymentFrequency.Weekly, 0m, LoanFundingSource.GuarantorCapital);
+        loan.Approve(GuarantorId, 100m, RepaymentFrequency.Weekly, 100m);
+        loan.MarkDisbursementPending();
+        loan.MarkDisbursed();
+        loans.Loans.Add(loan);
+
+        var act = async () => await service.CancelLoanByGuarantorAsync(GuarantorId, loan.Id);
+
+        await act.Should().ThrowAsync<InvalidLoanException>()
+            .WithMessage("*not yet disbursed*");
+    }
+
+    [Fact]
+    public async Task CancelLoan_records_audit_event()
     {
         var (funds, members, loans, _) = Setup();
         var audit = new FakeAuditLog();
@@ -387,6 +655,29 @@ public class LoanServiceTests
         var fund = CreateFamilyFund();
         funds.Funds.Add(fund);
         AddActiveMembership(members, fund.Id, MemberId);
+
+        var loan = Loan.Request(fund.Id, MemberId, 100m, RepaymentFrequency.Weekly, 0m, LoanFundingSource.GuarantorCapital);
+        loans.Loans.Add(loan);
+
+        await service.CancelLoanByMemberAsync(MemberId, loan.Id);
+
+        audit.Events.Should().Contain(e =>
+            e.Action == "Loan.Cancelled"
+            && e.ActorId == MemberId
+            && e.ResourceType == "Loan");
+    }
+
+    [Fact]
+    public async Task RequestLoan_records_audit_event()
+    {
+        var (funds, members, loans, _) = Setup();
+        var contributions = new FakeContributionRepository();
+        var audit = new FakeAuditLog();
+        var service = new LoanService(loans, funds, members, contributions, audit);
+        var fund = CreateFamilyFund();
+        funds.Funds.Add(fund);
+        AddActiveMembership(members, fund.Id, MemberId);
+        contributions.ConfirmedFundCredits[(MemberId, fund.Id)] = 200_000m;
 
         await service.RequestLoanAsync(MemberId, new RequestLoanRequest
         {

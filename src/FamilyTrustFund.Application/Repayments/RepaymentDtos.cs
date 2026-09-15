@@ -40,6 +40,7 @@ public sealed class RepaymentDto
 {
     public Guid Id { get; init; }
     public Guid LoanId { get; init; }
+    public string FundName { get; init; } = string.Empty;
     public int ScheduleVersion { get; init; }
     public RepaymentKind Kind { get; init; }
     public decimal ExpectedAmount { get; init; }
@@ -47,6 +48,23 @@ public sealed class RepaymentDto
     public decimal Surplus { get; init; }
     public DateTime PaidAtUtc { get; init; }
     public string? Note { get; init; }
+}
+
+/// <summary>A recorded repayment with its fund context, used internally
+/// when projecting cross-fund paginated history from the repository.</summary>
+public sealed class RepaymentWithFund
+{
+    public Repayment Repayment { get; init; } = default!;
+    public string FundName { get; init; } = string.Empty;
+}
+
+/// <summary>Paginated page of repayment records returned to clients.</summary>
+public sealed class PagedRepaymentsResult
+{
+    public IReadOnlyList<RepaymentDto> Items { get; init; } = Array.Empty<RepaymentDto>();
+    public int TotalCount { get; init; }
+    public int Page { get; init; }
+    public int PageSize { get; init; }
 }
 
 /// <summary>Server-calculated summary of a loan's repayment position.</summary>
@@ -61,4 +79,62 @@ public sealed class RepaymentSummaryDto
 
     /// <summary>Server-calculated amount required to settle the loan now.</summary>
     public decimal SettlementQuote { get; init; }
+}
+
+/// <summary>A manually declared repayment awaiting Guarantor confirmation.</summary>
+public sealed class ReportPendingRepaymentRequest
+{
+    public Guid LoanId { get; init; }
+    public decimal Amount { get; init; }
+    public RepaymentKind Kind { get; init; }
+    public string? Reference { get; init; }
+    public string? Note { get; init; }
+}
+
+/// <summary>Guarantor instruction to confirm a pending repayment.</summary>
+public sealed class ConfirmPendingRepaymentRequest
+{
+    public Guid PendingRepaymentId { get; init; }
+
+    /// <summary>Optional free-text note added by the Guarantor on confirmation.</summary>
+    public string? Note { get; init; }
+}
+
+/// <summary>Guarantor instruction to reject a pending repayment.</summary>
+public sealed class RejectPendingRepaymentRequest
+{
+    public Guid PendingRepaymentId { get; init; }
+    public string? Reason { get; init; }
+}
+
+/// <summary>Result returned after confirming a pending repayment.</summary>
+public sealed class ConfirmPendingRepaymentResult
+{
+    public PendingRepaymentDto Pending { get; init; } = new();
+    public bool RepaymentPosted { get; init; }
+}
+
+/// <summary>A pending repayment returned to clients.</summary>
+public sealed class PendingRepaymentDto
+{
+    public Guid Id { get; init; }
+    public Guid LoanId { get; init; }
+    public Guid MemberId { get; init; }
+    public Guid FundId { get; init; }
+    public string FundName { get; init; } = string.Empty;
+    public string MemberDisplayName { get; init; } = string.Empty;
+    public string MemberEmail { get; init; } = string.Empty;
+    public decimal Amount { get; init; }
+    public RepaymentKind Kind { get; init; }
+    public string? Reference { get; init; }
+    public string? Note { get; init; }
+    public PendingRepaymentStatus Status { get; init; }
+    public string? RejectionReason { get; init; }
+    public string? ConfirmationNote { get; init; }
+    public DateTime ReportedAtUtc { get; init; }
+    public DateTime? ConfirmedAtUtc { get; init; }
+    public DateTime? RejectedAtUtc { get; init; }
+
+    /// <summary>Whether the member uploaded payment evidence for this repayment.</summary>
+    public bool HasEvidence { get; set; }
 }

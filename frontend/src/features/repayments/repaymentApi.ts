@@ -3,6 +3,7 @@ import { api } from '../../lib/api'
 
 export type ScheduleItemStatus = 'Scheduled' | 'Paid' | 'Overdue'
 export type RepaymentKind = 'Scheduled' | 'LumpSum' | 'FullSettlement'
+export type PendingRepaymentStatus = 'PendingConfirmation' | 'Confirmed' | 'Rejected'
 
 export interface ScheduleItem {
   id: string
@@ -38,6 +39,7 @@ export interface RepaymentSummary {
 export interface RepaymentRecord {
   id: string
   loanId: string
+  fundName: string
   scheduleVersion: number
   kind: RepaymentKind
   expectedAmount: number
@@ -47,10 +49,51 @@ export interface RepaymentRecord {
   note: string | null
 }
 
-export interface MakeRepaymentInput {
+export interface PagedRepaymentsResult {
+  items: RepaymentRecord[]
+  totalCount: number
+  page: number
+  pageSize: number
+}
+
+export interface PendingRepayment {
+  id: string
+  loanId: string
+  memberId: string
+  fundId: string
+  fundName: string
+  memberDisplayName: string
+  memberEmail: string
+  amount: number
+  kind: RepaymentKind
+  reference: string | null
+  note: string | null
+  status: PendingRepaymentStatus
+  rejectionReason: string | null
+  confirmationNote: string | null
+  reportedAtUtc: string
+  confirmedAtUtc: string | null
+  rejectedAtUtc: string | null
+  hasEvidence: boolean
+}
+
+export interface DeclareRepaymentInput {
   loanId: string
   amount: number
+  kind: RepaymentKind
+  reference?: string | null
   note?: string | null
+}
+
+export interface PendingRepaymentDecisionInput {
+  pendingRepaymentId: string
+  reason?: string | null
+  note?: string | null
+}
+
+export interface ConfirmPendingRepaymentResult {
+  pending: PendingRepayment
+  repaymentPosted: boolean
 }
 
 function loanKey(loanId: string) {
@@ -81,32 +124,70 @@ export function useRepaymentHistory(loanId: string | null) {
   })
 }
 
-export function useMakeScheduledPayment() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: (input: MakeRepaymentInput) =>
-      api.post<RepaymentSummary>(`/loans/${input.loanId}/repayments`, input),
-    onSuccess: (_data, input) => qc.invalidateQueries({ queryKey: loanKey(input.loanId) }),
+export function useMyRepaymentHistory(page: number, pageSize: number) {
+  return useQuery({
+    queryKey: ['repayments', 'history', 'mine', page, pageSize],
+    queryFn: () =>
+      api.get<PagedRepaymentsResult>(
+        `/loans/repayments/history/mine?page=${page}&pageSize=${pageSize}`,
+      ),
   })
 }
 
-export function useMakeLumpSum() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: (input: MakeRepaymentInput) =>
-      api.post<RepaymentSummary>(`/loans/${input.loanId}/repayments/lump-sum`, input),
-    onSuccess: (_data, input) => qc.invalidateQueries({ queryKey: loanKey(input.loanId) }),
+export function useMyPendingRepayments() {
+  return useQuery({
+    queryKey: ['repayments', 'pending', 'mine'],
+    queryFn: () => api.get<PendingRepayment[]>('/loans/repayments/pending/mine'),
   })
 }
 
-export function useSettleLoan() {
+export function useDeclareRepayment() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (input: MakeRepaymentInput) =>
-      api.post<RepaymentSummary>(`/loans/${input.loanId}/repayments/settle`, input),
-    onSuccess: (_data, input) => {
-      qc.invalidateQueries({ queryKey: loanKey(input.loanId) })
+    mutationFn: (input: DeclareRepaymentInput) =>
+      api.post<PendingRepayment>(`/loans/${input.loanId}/repayments/declare`, {
+        loanId: input.loanId,
+        amount: input.amount,
+        kind: input.kind,
+        reference: input.reference,
+        note: input.note,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['repayments'] })
       qc.invalidateQueries({ queryKey: ['loans'] })
+    },
+  })
+}
+
+export function useGuarantorPendingRepayments() {
+  return useQuery({
+    queryKey: ['guarantor', 'repayments', 'pending'],
+    queryFn: () => api.get<PendingRepayment[]>('/guarantor/repayments/pending'),
+  })
+}
+
+export function useConfirmPendingRepayment() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: PendingRepaymentDecisionInput) =>
+      api.post<ConfirmPendingRepaymentResult>('/guarantor/repayments/confirm', input),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ['guarantor', 'repayments'] })
+      qc.invalidateQueries({ queryKey: ['repayments'] })
+      qc.invalidateQueries({ queryKey: ['loans', data.pending.loanId, 'repayments'] })
+      qc.invalidateQueries({ queryKey: ['loans'] })
+    },
+  })
+}
+
+export function useRejectPendingRepayment() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: PendingRepaymentDecisionInput) =>
+      api.post<PendingRepayment>('/guarantor/repayments/reject', input),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['guarantor', 'repayments'] })
+      qc.invalidateQueries({ queryKey: ['repayments'] })
     },
   })
 }

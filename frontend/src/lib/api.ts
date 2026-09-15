@@ -1,5 +1,31 @@
 const API_BASE = '/api'
 
+// Cached anti-forgery request token. Minimal API endpoints that bind IFormFile
+// (payment evidence uploads) validate a `__RequestVerificationToken` field on
+// multipart/form-data requests. The token is issued by /api/antiforgery/token
+// together with its matching cookie (sent via credentials: 'include').
+let antiforgeryToken: string | null = null
+let antiforgeryTokenPromise: Promise<string | null> | null = null
+
+function loadAntiforgeryToken(): Promise<string | null> {
+  if (antiforgeryToken) return Promise.resolve(antiforgeryToken)
+  if (antiforgeryTokenPromise) return antiforgeryTokenPromise
+  antiforgeryTokenPromise = fetch(`${API_BASE}/antiforgery/token`, {
+    credentials: 'include',
+  })
+    .then(async (res) => {
+      if (!res.ok) return null
+      const body = (await res.json()) as { requestToken?: string }
+      antiforgeryToken = body.requestToken ?? null
+      return antiforgeryToken
+    })
+    .catch(() => null)
+    .finally(() => {
+      antiforgeryTokenPromise = null
+    })
+  return antiforgeryTokenPromise
+}
+
 export class ApiError extends Error {
   status: number
   constructor(status: number, message: string) {
@@ -55,6 +81,15 @@ export const api = {
     return fetch(`${API_BASE}${path}`, {
       method: 'DELETE',
       credentials: 'include',
+    }).then((r) => handle<T>(r))
+  },
+  async postForm<T>(path: string, body: FormData): Promise<T> {
+    const token = await loadAntiforgeryToken()
+    if (token) body.append('__RequestVerificationToken', token)
+    return fetch(`${API_BASE}${path}`, {
+      method: 'POST',
+      credentials: 'include',
+      body,
     }).then((r) => handle<T>(r))
   },
 }

@@ -1,12 +1,19 @@
 import { useState } from 'react'
 import { Check, X, BadgeCheck } from 'lucide-react'
-import { useGuarantorPendingLoans, useApproveLoan, useRejectLoan } from './loanApi'
+import {
+  useGuarantorPendingLoans,
+  useApproveLoan,
+  useRejectLoan,
+  useGuarantorCancelLoan,
+} from './loanApi'
 import { PageHeader } from '../../components/ui/PageHeader'
 import { Card } from '../../components/ui/Card'
 import { Badge, StatusBadge } from '../../components/ui/Badge'
 import { Button } from '../../components/ui/Button'
+import { AmountInput } from '../../components/ui/AmountInput'
 import { EmptyState, SkeletonCard } from '../../components/ui/State'
 import { MoneyDisplay } from '../../lib/money'
+import { formatShortDateTime } from '../../lib/formatDate'
 import type { Loan, RepaymentFrequency } from './loanApi'
 
 const FREQUENCIES = ['Weekly', 'Biweekly', 'Monthly'] as const
@@ -41,13 +48,10 @@ function ApproveForm({ loan, onDone }: { loan: Loan; onDone: () => void }) {
         <>
           <div className="field">
             <label htmlFor={`amount-${loan.id}`}>Approved amount (₦)</label>
-            <input
+            <AmountInput
               id={`amount-${loan.id}`}
-              type="number"
-              min="1"
-              step="0.01"
               value={amount}
-              onChange={(e) => setAmount(e.target.value)}
+              onChange={setAmount}
               required
             />
             <p className="field-hint">
@@ -123,6 +127,7 @@ function ApproveForm({ loan, onDone }: { loan: Loan; onDone: () => void }) {
 
 export function GuarantorLoansPage() {
   const { data: loans, isLoading, error } = useGuarantorPendingLoans()
+  const cancel = useGuarantorCancelLoan()
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
 
   function toggle(id: string) {
@@ -187,14 +192,14 @@ export function GuarantorLoansPage() {
                   <li>
                     <span className="property-label">Requested</span>
                     <span className="property-value">
-                      {new Date(l.requestedAtUtc).toLocaleString()}
+                      {formatShortDateTime(l.requestedAtUtc)}
                     </span>
                   </li>
                 </ul>
 
                 <div style={{ marginTop: 16 }}>
                   {!open ? (
-                    <div style={{ display: 'flex', gap: 8 }}>
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                       <Button onClick={() => toggle(l.id)}>
                         <BadgeCheck size={16} /> Review
                       </Button>
@@ -203,6 +208,21 @@ export function GuarantorLoansPage() {
                         onClick={() => toggle(l.id)}
                       >
                         <X size={16} /> Reject
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        disabled={cancel.isPending}
+                        onClick={() => {
+                          if (
+                            window.confirm(
+                              `Cancel ${l.memberDisplayName}'s loan request for ${l.fundName}?`,
+                            )
+                          ) {
+                            cancel.mutate({ loanId: l.id })
+                          }
+                        }}
+                      >
+                        <X size={16} /> {cancel.isPending ? 'Cancelling…' : 'Cancel'}
                       </Button>
                     </div>
                   ) : (

@@ -64,6 +64,36 @@ public class FundContributionTests
     }
 
     [Fact]
+    public void Confirm_with_note_stores_confirmation_note_trimmed()
+    {
+        var contribution = FundContribution.Report(FundId, MemberId, 100m);
+
+        contribution.Confirm("  Verified with member  ");
+
+        contribution.ConfirmationNote.Should().Be("Verified with member");
+    }
+
+    [Fact]
+    public void Confirm_blank_note_is_null()
+    {
+        var contribution = FundContribution.Report(FundId, MemberId, 100m);
+
+        contribution.Confirm("   ");
+
+        contribution.ConfirmationNote.Should().BeNull();
+    }
+
+    [Fact]
+    public void Confirm_overlong_confirmation_note_throws()
+    {
+        var contribution = FundContribution.Report(FundId, MemberId, 100m);
+
+        var act = () => contribution.Confirm(new string('x', 1001));
+
+        act.Should().Throw<InvalidContributionException>();
+    }
+
+    [Fact]
     public void Confirm_null_or_whitespace_fields_are_normalized()
     {
         var contribution = FundContribution.Report(FundId, MemberId, 100m, "  ", "   ");

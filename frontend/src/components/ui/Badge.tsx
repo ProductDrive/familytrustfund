@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { toneForStatusString } from './statusTone'
+import { formatEnumLabel } from '../../lib/formatLabel'
 
 export type BadgeTone =
   | 'success'
@@ -35,7 +36,7 @@ export function StatusBadge({
 }) {
   return (
     <Badge tone={toneForStatusString(status)} withDot={withDot}>
-      {status}
+      {formatEnumLabel(status)}
     </Badge>
   )
 }

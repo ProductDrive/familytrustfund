@@ -5,6 +5,7 @@ import { Card } from '../../components/ui/Card'
 import { StatusBadge } from '../../components/ui/Badge'
 import { EmptyState, SkeletonCard } from '../../components/ui/State'
 import { Avatar } from '../../components/ui/Avatar'
+import { formatShortDate } from '../../lib/formatDate'
 
 export function AdminMembershipsPage() {
   const { data: memberships, isLoading, error } = useAdminMemberships()
@@ -46,7 +47,7 @@ export function AdminMembershipsPage() {
                     <StatusBadge status={m.status} withDot />
                   </td>
                   <td className="cell-secondary">
-                    {new Date(m.joinedAtUtc).toLocaleDateString()}
+                    {formatShortDate(m.joinedAtUtc)}
                   </td>
                 </tr>
               ))}

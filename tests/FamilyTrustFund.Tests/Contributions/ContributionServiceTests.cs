@@ -1,4 +1,5 @@
 using FamilyTrustFund.Application.Contributions;
+using FamilyTrustFund.Application.Evidence;
 using FamilyTrustFund.Domain.Contributions;
 using FamilyTrustFund.Domain.Funds;
 using FamilyTrustFund.Domain.Membership;
@@ -21,7 +22,7 @@ public class ContributionServiceTests
         var funds = new FakeFundRepository();
         var members = new FakeMembershipRepository();
         var contributions = new FakeContributionRepository();
-        var service = new ContributionService(contributions, funds, members, new FakeAuditLog());
+        var service = new ContributionService(contributions, funds, members, new FakeEvidenceRepository(), new FakeAuditLog());
         return (funds, members, contributions, service);
     }
 
@@ -133,6 +134,32 @@ public class ContributionServiceTests
     }
 
     [Fact]
+    public async Task Report_with_active_loan_in_another_fund_throws()
+    {
+        // ADR-006 scope: the restriction is member-wide, not fund-scoped. A
+        // member with an active loan in ANY fund cannot contribute to any fund.
+        var (funds, members, contributions, service) = Setup();
+        var otherFund = CreateFamilyFund();
+        funds.Funds.Add(otherFund);
+        var otherMembership = FundMember.Join(otherFund.Id, MemberId);
+        members.Memberships.Add(otherMembership);
+        contributions.ActiveLoans.Add((MemberId, otherFund.Id));
+
+        var targetFund = CreateFamilyFund();
+        funds.Funds.Add(targetFund);
+        AddActiveMembership(members, targetFund.Id, MemberId);
+
+        var act = async () => await service.ReportContributionAsync(MemberId, new ReportContributionRequest
+        {
+            FundId = targetFund.Id,
+            Amount = 100m,
+        });
+
+        await act.Should().ThrowAsync<InvalidContributionException>()
+            .WithMessage("*active loan*");
+    }
+
+    [Fact]
     public async Task Confirm_posts_contribution_when_guarantor_owns_fund()
     {
         var (funds, _, contributions, service) = Setup();
@@ -235,6 +262,36 @@ public class ContributionServiceTests
 
         await act.Should().ThrowAsync<InvalidContributionException>()
             .WithMessage("*permission to reject*");
+    }
+
+    [Fact]
+    public async Task Confirm_and_Reject_mark_evidence_as_reviewed()
+    {
+        var funds = new FakeFundRepository();
+        var members = new FakeMembershipRepository();
+        var contributions = new FakeContributionRepository();
+        var evidence = new FakeEvidenceRepository();
+        var service = new ContributionService(contributions, funds, members, evidence, new FakeAuditLog());
+
+        var fund = CreateFamilyFund();
+        funds.Funds.Add(fund);
+
+        // Contribution with attached evidence.
+        var contribution = FundContribution.Report(fund.Id, MemberId, 100m);
+        contributions.Contributions.Add(contribution);
+        var uploaded = await new EvidenceService(evidence, new FakeFileStorage(), new FakeAuditLog())
+            .UploadAsync(MemberId, "Contribution", contribution.Id, "receipt.png", "image/png", new byte[] { 1, 2, 3 });
+
+        var confirmed = await service.ConfirmContributionAsync(GuarantorId, new ConfirmContributionRequest
+        {
+            ContributionId = contribution.Id,
+        });
+
+        confirmed.Status.Should().Be(ContributionStatus.Confirmed);
+
+        var storedAfterConfirm = evidence.Items.Single(i => i.Id == uploaded.Id);
+        storedAfterConfirm.ReviewedByUserId.Should().Be(GuarantorId);
+        storedAfterConfirm.ReviewedAtUtc.Should().NotBeNull();
     }
 
     [Fact]

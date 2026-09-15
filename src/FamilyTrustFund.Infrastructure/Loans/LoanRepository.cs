@@ -1,4 +1,5 @@
 using FamilyTrustFund.Application.Loans;
+using FamilyTrustFund.Domain.Funds;
 using FamilyTrustFund.Domain.Loans;
 using FamilyTrustFund.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
@@ -32,6 +33,7 @@ public class LoanRepository : ILoanRepository
                 MemberEmail = u.Email ?? string.Empty,
                 FundId = x.Fund.Id,
                 FundName = x.Fund.Name,
+                FundType = x.Fund.Type,
                 GuarantorId = x.Fund.GuarantorId,
             })
             .OrderByDescending(x => x.Loan.RequestedAtUtc)
@@ -51,6 +53,7 @@ public class LoanRepository : ILoanRepository
                 MemberEmail = x.User.Email ?? string.Empty,
                 FundId = f.Id,
                 FundName = f.Name,
+                FundType = f.Type,
                 GuarantorId = f.GuarantorId,
             })
             .OrderByDescending(x => x.Loan.RequestedAtUtc)
@@ -70,19 +73,20 @@ public class LoanRepository : ILoanRepository
                 MemberEmail = u.Email ?? string.Empty,
                 FundId = x.Fund.Id,
                 FundName = x.Fund.Name,
+                FundType = x.Fund.Type,
                 GuarantorId = x.Fund.GuarantorId,
             })
             .OrderByDescending(x => x.Loan.RequestedAtUtc)
             .ToListAsync(ct);
 
-    public Task<int> CountActiveDisbursedByMemberInFundAsync(
+    public Task<int> CountActiveByMemberAsync(
         Guid memberId,
-        Guid fundId,
         CancellationToken ct = default) =>
         _db.Loans.CountAsync(
             l => l.MemberId == memberId
-                && l.FundId == fundId
-                && l.Status == LoanStatus.Disbursed,
+                && (l.Status == LoanStatus.Pending
+                    || l.Status == LoanStatus.Approved
+                    || l.Status == LoanStatus.Disbursed),
             ct);
 
     public Task<decimal> SumActiveDisbursedByFundAsync(

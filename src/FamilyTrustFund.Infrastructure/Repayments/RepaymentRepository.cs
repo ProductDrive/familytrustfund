@@ -1,8 +1,10 @@
 using FamilyTrustFund.Application.Repayments;
+using FamilyTrustFund.Domain.Funds;
 using FamilyTrustFund.Domain.Loans;
 using FamilyTrustFund.Domain.Repayments;
 using FamilyTrustFund.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 
 namespace FamilyTrustFund.Infrastructure.Repayments;
 
@@ -49,9 +51,65 @@ public sealed class RepaymentRepository : IRepaymentRepository
         return await _db.Set<Repayment>().Where(x => x.LoanId == loanId).ToListAsync(ct);
     }
 
+    public async Task<(IReadOnlyList<RepaymentWithFund> Items, int TotalCount)> GetMyRepaymentsAsync(
+        Guid memberId, int page, int pageSize, CancellationToken ct = default)
+    {
+        if (page < 1) page = 1;
+        if (pageSize < 1) pageSize = 10;
+
+        var query = from repayment in _db.Repayments
+                    join loan in _db.Loans on repayment.LoanId equals loan.Id
+                    join fund in _db.Funds on loan.FundId equals fund.Id
+                    where loan.MemberId == memberId
+                    select new { repayment, fund.Name };
+
+        var totalCount = await query.CountAsync(ct);
+        var rows = await query
+            .OrderByDescending(x => x.repayment.PaidAtUtc)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(ct);
+
+        return (rows.Select(x => new RepaymentWithFund { Repayment = x.repayment, FundName = x.Name }).ToList(), totalCount);
+    }
+
     public async Task AddAsync(LoanSchedule schedule, CancellationToken ct = default)
     {
         await _db.Set<LoanSchedule>().AddAsync(schedule, ct);
+    }
+
+    /// <summary>
+    /// Adds and saves a new schedule revision idempotently. The unique
+    /// (LoanId, Version) index is the authoritative guard: if a concurrent
+    /// request (e.g. the verify endpoint racing a provider webhook) has already
+    /// persisted the same revision, the pending copy is detached and the
+    /// existing schedule is returned so the caller can treat the operation as a
+    /// no-op instead of surfacing a duplicate-key error.
+    /// </summary>
+    public async Task<LoanSchedule?> SaveNewScheduleAsync(LoanSchedule schedule, CancellationToken ct = default)
+    {
+        await _db.Set<LoanSchedule>().AddAsync(schedule, ct);
+
+        try
+        {
+            await _db.SaveChangesAsync(ct);
+            return schedule;
+        }
+        catch (PostgresException ex)
+            when (ex.SqlState == PostgresErrorCodes.UniqueViolation
+                  && ex.ConstraintName == "IX_loan_schedules_LoanId_Version")
+        {
+            // Detach the conflicting revision (and its items) without clearing
+            // the tracker, so other pending changes in this unit of work (e.g.
+            // the disbursement/loan status) are preserved.
+            _db.Entry(schedule).State = EntityState.Detached;
+            foreach (var item in schedule.Items)
+            {
+                _db.Entry(item).State = EntityState.Detached;
+            }
+
+            return await GetCurrentScheduleAsync(schedule.LoanId, ct);
+        }
     }
 
     public async Task AddAsync(Repayment repayment, CancellationToken ct = default)

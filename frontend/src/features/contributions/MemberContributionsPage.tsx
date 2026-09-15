@@ -11,8 +11,11 @@ import { Card } from '../../components/ui/Card'
 import { StatusBadge } from '../../components/ui/Badge'
 import { KpiCard } from '../../components/ui/KpiCard'
 import { Button } from '../../components/ui/Button'
+import { AmountInput } from '../../components/ui/AmountInput'
 import { EmptyState, SkeletonCard } from '../../components/ui/State'
 import { MoneyDisplay } from '../../lib/money'
+import { formatShortDate } from '../../lib/formatDate'
+import { EvidenceUpload } from '../evidence/EvidenceUpload'
 
 function ReportContributionForm({ onDone }: { onDone: () => void }) {
   const report = useReportContribution()
@@ -71,13 +74,10 @@ function ReportContributionForm({ onDone }: { onDone: () => void }) {
 
         <div className="field">
           <label htmlFor="contribution-amount">Amount (₦)</label>
-          <input
+          <AmountInput
             id="contribution-amount"
-            type="number"
-            min="1"
-            step="0.01"
             value={amount}
-            onChange={(e) => setAmount(e.target.value)}
+            onChange={setAmount}
             placeholder="e.g. 50000"
             required
           />
@@ -189,6 +189,7 @@ export function MemberContributionsPage() {
                 <th>Status</th>
                 <th>Reference</th>
                 <th>Reported</th>
+                <th>Evidence</th>
               </tr>
             </thead>
             <tbody>
@@ -205,7 +206,20 @@ export function MemberContributionsPage() {
                   </td>
                   <td className="cell-secondary">{c.reference ?? '—'}</td>
                   <td className="cell-secondary">
-                    {new Date(c.reportedAtUtc).toLocaleDateString()}
+                    {formatShortDate(c.reportedAtUtc)}
+                  </td>
+                  <td>
+                    {c.status === 'PendingConfirmation' ? (
+                      <EvidenceUpload
+                        resourceType="contribution"
+                        resourceId={c.id}
+                        hasEvidence={c.hasEvidence}
+                      />
+                    ) : c.hasEvidence ? (
+                      <span className="cell-secondary">Attached</span>
+                    ) : (
+                      <span className="cell-secondary">—</span>
+                    )}
                   </td>
                 </tr>
               ))}

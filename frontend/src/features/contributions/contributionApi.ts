@@ -15,9 +15,11 @@ export interface Contribution {
   reference: string | null
   note: string | null
   rejectionReason: string | null
+  confirmationNote: string | null
   reportedAtUtc: string
   confirmedAtUtc: string | null
   rejectedAtUtc: string | null
+  hasEvidence: boolean
 }
 
 export interface ContributionSummary {
@@ -37,6 +39,7 @@ export interface ReportContributionInput {
 
 export interface ConfirmContributionInput {
   contributionId: string
+  note?: string | null
 }
 
 export interface RejectContributionInput {

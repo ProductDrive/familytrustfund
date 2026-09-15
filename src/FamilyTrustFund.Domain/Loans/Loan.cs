@@ -56,9 +56,13 @@ public class Loan
     /// <summary>Rejection reason supplied by the Guarantor.</summary>
     public string? RejectionReason { get; private set; }
 
+    /// <summary>User id of whoever cancelled the loan, when applicable.</summary>
+    public Guid? CancelledByUserId { get; private set; }
+
     public DateTime RequestedAtUtc { get; private set; }
     public DateTime? ApprovedAtUtc { get; private set; }
     public DateTime? RejectedAtUtc { get; private set; }
+    public DateTime? CancelledAtUtc { get; private set; }
     public DateTime CreatedAtUtc { get; private set; } = DateTime.UtcNow;
     public DateTime UpdatedAtUtc { get; private set; } = DateTime.UtcNow;
 
@@ -168,6 +172,42 @@ public class Loan
         Status = LoanStatus.Rejected;
         RejectionReason = reason?.Trim();
         RejectedAtUtc = DateTime.UtcNow;
+        Touch();
+    }
+
+    /// <summary>
+    /// A member cancels their own loan request while it is still pending.
+    /// A pending request may be withdrawn before the Guarantor decides.
+    /// </summary>
+    public void CancelByMember(Guid memberId)
+    {
+        if (Status != LoanStatus.Pending)
+        {
+            throw new InvalidLoanException("You can only cancel a pending loan request.");
+        }
+
+        CancelledByUserId = memberId;
+        Status = LoanStatus.Cancelled;
+        CancelledAtUtc = DateTime.UtcNow;
+        Touch();
+    }
+
+    /// <summary>
+    /// The Guarantor cancels a loan that has not yet been disbursed —
+    /// either a pending request or an approved-but-not-disbursed loan.
+    /// A cancellation is a permanent terminal state; disbursed or completed
+    /// loans can never be cancelled.
+    /// </summary>
+    public void CancelByGuarantor(Guid guarantorId)
+    {
+        if (Status != LoanStatus.Pending && Status != LoanStatus.Approved)
+        {
+            throw new InvalidLoanException("Only pending or approved (not yet disbursed) loans can be cancelled.");
+        }
+
+        CancelledByUserId = guarantorId;
+        Status = LoanStatus.Cancelled;
+        CancelledAtUtc = DateTime.UtcNow;
         Touch();
     }
 

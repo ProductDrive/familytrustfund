@@ -50,12 +50,13 @@ public interface IContributionRepository
         CancellationToken ct = default);
 
     /// <summary>
-    /// Checks whether the member has an active disbursed loan in the fund,
-    /// which prevents them from contributing (ADR-006).
+    /// Checks whether the member has an active disbursed loan in any fund,
+    /// which prevents them from contributing (ADR-006). The restriction is
+    /// member-wide: a member cannot contribute to any fund while they hold an
+    /// active loan anywhere.
     /// </summary>
     Task<bool> HasActiveDisbursedLoanAsync(
         Guid memberId,
-        Guid fundId,
         CancellationToken ct = default);
 
     void Add(FundContribution contribution);

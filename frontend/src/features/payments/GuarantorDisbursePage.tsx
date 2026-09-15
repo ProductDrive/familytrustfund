@@ -1,32 +1,154 @@
-import { useState } from 'react'
-import { Send, HandCoins } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import type { CSSProperties } from 'react'
+import { ExternalLink, HandCoins, RefreshCw, Send, ShieldCheck, X } from 'lucide-react'
 import { useFunds } from '../funds/fundApi'
-import { useFundLoans } from '../loans/loanApi'
-import { useDisburseLoan, useGuarantorLoanDisbursement } from './paymentApi'
+import { useFundLoans, useGuarantorCancelLoan } from '../loans/loanApi'
+import {
+  useDisburseLoan,
+  useGuarantorLoanDisbursement,
+  useVerifyCapitalPayment,
+  type Disbursement,
+} from './paymentApi'
 import { PageHeader } from '../../components/ui/PageHeader'
 import { Card } from '../../components/ui/Card'
 import { StatusBadge } from '../../components/ui/Badge'
 import { Button } from '../../components/ui/Button'
 import { EmptyState, SkeletonCard } from '../../components/ui/State'
 import { MoneyDisplay } from '../../lib/money'
+import { formatNaira } from '../../lib/formatNaira'
 import type { Loan } from '../loans/loanApi'
+
+const PENDING_KEY = 'ftf-disburse-pending'
+
+const cellStack: CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'flex-start',
+  gap: 6,
+}
+
+const cellRow: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  flexWrap: 'wrap',
+}
+
+function PendingActions({
+  disbursement,
+  loan,
+}: {
+  disbursement: Disbursement
+  loan: Loan
+}) {
+  const verify = useVerifyCapitalPayment(loan.fundId)
+
+  return (
+    <>
+      <div style={cellRow}>
+        {disbursement.authorizationUrl && (
+          <a
+            className="btn btn--secondary btn--sm"
+            href={disbursement.authorizationUrl}
+            target="_blank"
+            rel="noreferrer"
+          >
+            <ExternalLink size={14} /> Pay with Paystack
+          </a>
+        )}
+        <Button
+          size="sm"
+          onClick={() => verify.mutate(disbursement.providerReference)}
+          disabled={verify.isPending}
+        >
+          <ShieldCheck size={14} /> {verify.isPending ? 'Verifying…' : 'Verify payment'}
+        </Button>
+      </div>
+      {verify.isError && (
+        <p className="form-error" style={{ margin: 0 }}>
+          {(verify.error as Error).message}
+        </p>
+      )}
+    </>
+  )
+}
 
 function DisburseButton({ loan }: { loan: Loan }) {
   const disburse = useDisburseLoan()
+  const cancel = useGuarantorCancelLoan()
   const { data: disbursement, isLoading } = useGuarantorLoanDisbursement(loan.id)
+
+  function initiate() {
+    const callbackUrl = `${window.location.origin}/guarantor/disburse`
+    disburse.mutate(
+      { loanId: loan.id, callbackUrl },
+      {
+        onSuccess: (result) => {
+          if (result.authorizationUrl) {
+            sessionStorage.setItem(
+              PENDING_KEY,
+              JSON.stringify({ loanId: loan.id, fundId: loan.fundId }),
+            )
+            window.location.assign(result.authorizationUrl)
+          }
+        },
+      },
+    )
+  }
 
   if (isLoading) {
     return <span className="cell-secondary">…</span>
   }
 
   if (disbursement) {
+    if (disbursement.status === 'Failed') {
+      return (
+        <div style={cellStack}>
+          <div style={cellRow}>
+            <StatusBadge status={disbursement.status} withDot />
+          </div>
+          {disbursement.failureReason && (
+            <span className="muted" style={{ fontSize: 12 }}>
+              {disbursement.failureReason}
+            </span>
+          )}
+          <Button
+            size="sm"
+            onClick={initiate}
+            disabled={disburse.isPending}
+          >
+            <RefreshCw size={14} /> {disburse.isPending ? 'Initiating…' : 'Retry payment'}
+          </Button>
+        </div>
+      )
+    }
+
     return (
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        <StatusBadge status={disbursement.status} withDot />
+      <div style={cellStack}>
+        <div style={cellRow}>
+          <StatusBadge status={disbursement.status} withDot />
+          {disbursement.status === 'Pending' && (
+            <span className="cell-secondary">Payment not yet confirmed</span>
+          )}
+        </div>
+
+        {disbursement.status === 'Pending' && disbursement.grossAmount != null && (
+          <p className="cell-secondary" style={{ margin: 0 }}>
+            You pay {formatNaira(disbursement.grossAmount)} in total
+            {disbursement.estimatedFee != null
+              ? ` (fee ${formatNaira(disbursement.estimatedFee)})`
+              : ''}.
+          </p>
+        )}
+
         {disbursement.failureReason && (
           <span className="muted" style={{ fontSize: 12 }}>
             {disbursement.failureReason}
           </span>
+        )}
+
+        {disbursement.status === 'Pending' && (
+          <PendingActions disbursement={disbursement} loan={loan} />
         )}
       </div>
     )
@@ -40,15 +162,82 @@ function DisburseButton({ loan }: { loan: Loan }) {
 
   return (
     <div>
-      <Button
-        size="sm"
-        onClick={() => disburse.mutate({ loanId: loan.id })}
-        disabled={disburse.isPending}
-      >
-        <Send size={14} /> {disburse.isPending ? 'Initiating…' : 'Disburse'}
-      </Button>
+      <div style={cellRow}>
+        <Button size="sm" onClick={initiate} disabled={disburse.isPending}>
+          <Send size={14} /> {disburse.isPending ? 'Initiating…' : 'Disburse'}
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={cancel.isPending}
+          onClick={() => {
+            if (
+              window.confirm(
+                `Cancel this approved loan for ${loan.memberDisplayName || 'the member'}? It has not been disbursed yet.`,
+              )
+            ) {
+              cancel.mutate({ loanId: loan.id })
+            }
+          }}
+        >
+          <X size={14} /> {cancel.isPending ? 'Cancelling…' : 'Cancel'}
+        </Button>
+      </div>
       {error && <p className="form-error" style={{ marginTop: 4 }}>{error.message}</p>}
     </div>
+  )
+}
+
+function DisbursementReturnBanner({
+  fundId,
+  reference,
+  onDone,
+}: {
+  fundId: string
+  reference: string
+  onDone: () => void
+}) {
+  const verify = useVerifyCapitalPayment(fundId)
+  const [outcome, setOutcome] = useState<'verifying' | 'confirmed' | 'failed'>('verifying')
+  const [detail, setDetail] = useState('')
+
+  useEffect(() => {
+    verify.mutate(reference, {
+      onSuccess: (tx) => {
+        setOutcome(tx.status === 'Confirmed' ? 'confirmed' : 'failed')
+        setDetail(
+          tx.status === 'Confirmed'
+            ? 'Your payment was confirmed and the loan has been disbursed to the member.'
+            : tx.failureReason ?? 'The payment was not confirmed.',
+        )
+      },
+      onError: (e) => {
+        setOutcome('failed')
+        setDetail((e as Error).message)
+      },
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  return (
+    <section className={`capital-return capital-return--${outcome}`} aria-live="polite">
+      <h3>
+        {outcome === 'verifying' && 'Verifying your payment…'}
+        {outcome === 'confirmed' && 'Loan disbursed'}
+        {outcome === 'failed' && 'Payment could not be confirmed'}
+      </h3>
+      {outcome === 'verifying' && (
+        <p className="muted">
+          Contacting the payment provider. This is a server-confirmed transaction.
+        </p>
+      )}
+      {outcome !== 'verifying' && <p className="muted">{detail}</p>}
+      {outcome !== 'verifying' && (
+        <Button type="button" variant="secondary" size="sm" onClick={onDone}>
+          Dismiss
+        </Button>
+      )}
+    </section>
   )
 }
 
@@ -57,13 +246,43 @@ export function GuarantorDisbursePage() {
   const [fundId, setFundId] = useState('')
   const selectedFundId = fundId || funds?.[0]?.id
   const { data: loans, isLoading: loadingLoans } = useFundLoans(selectedFundId ?? null)
+  const [returnBanner, setReturnBanner] = useState<{ fundId: string; reference: string } | null>(null)
+
+  useEffect(() => {
+    const pendingRaw = sessionStorage.getItem(PENDING_KEY)
+    if (!pendingRaw) return
+    const reference = new URLSearchParams(window.location.search).get('reference')
+    if (!reference) return
+
+    let pending: { loanId?: string; fundId?: string } | null = null
+    try {
+      pending = JSON.parse(pendingRaw) as { loanId?: string; fundId?: string }
+    } catch {
+      // ignore malformed stored state
+    }
+
+    if (!pending?.fundId) return
+
+    sessionStorage.removeItem(PENDING_KEY)
+    window.history.replaceState({}, '', window.location.pathname)
+    // oxlint-disable-next-line react/set-state-in-effect
+    setReturnBanner({ fundId: pending.fundId, reference })
+  }, [])
 
   return (
     <div>
       <PageHeader
         title="Loan Disbursements"
-        subtitle="Initiate disbursement of approved loans to members' verified bank accounts."
+        subtitle="Approve a member payout by paying at checkout — the approved amount plus the provider fee — after which the member is settled through their verified account."
       />
+
+      {returnBanner && (
+        <DisbursementReturnBanner
+          fundId={returnBanner.fundId}
+          reference={returnBanner.reference}
+          onDone={() => setReturnBanner(null)}
+        />
+      )}
 
       {loadingFunds && <SkeletonCard />}
 

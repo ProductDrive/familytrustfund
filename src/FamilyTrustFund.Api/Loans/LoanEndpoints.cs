@@ -103,6 +103,31 @@ public static class LoanEndpoints
             return loan is null ? Results.NotFound() : Results.Ok(loan);
         });
 
+        // Cancel/pull back a pending loan request (Member — own pending requests only).
+        memberGroup.MapPost("/{id:guid}/cancel", async (
+            Guid id,
+            HttpContext http,
+            UserManager<ApplicationUser> userManager,
+            LoanService loanService,
+            CancellationToken ct) =>
+        {
+            var userId = UserId(http, userManager);
+            if (userId is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            try
+            {
+                var loan = await loanService.CancelLoanByMemberAsync(userId.Value, id, ct);
+                return Results.Ok(loan);
+            }
+            catch (InvalidLoanException ex)
+            {
+                return Results.BadRequest(new { message = ex.Message });
+            }
+        });
+
         // ── Guarantor endpoints ───────────────────────────────────────────
 
         var guarantorGroup = app.MapGroup("/api/guarantor/loans")
@@ -193,6 +218,31 @@ public static class LoanEndpoints
             try
             {
                 var loan = await loanService.RejectLoanAsync(userId.Value, request, ct);
+                return Results.Ok(loan);
+            }
+            catch (InvalidLoanException ex)
+            {
+                return Results.BadRequest(new { message = ex.Message });
+            }
+        });
+
+        // Cancel a pending or approved (not yet disbursed) loan (Guarantor).
+        guarantorGroup.MapPost("/cancel", async (
+            HttpContext http,
+            UserManager<ApplicationUser> userManager,
+            LoanService loanService,
+            [FromBody] CancelLoanRequest request,
+            CancellationToken ct) =>
+        {
+            var userId = UserId(http, userManager);
+            if (userId is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            try
+            {
+                var loan = await loanService.CancelLoanByGuarantorAsync(userId.Value, request.LoanId, ct);
                 return Results.Ok(loan);
             }
             catch (InvalidLoanException ex)

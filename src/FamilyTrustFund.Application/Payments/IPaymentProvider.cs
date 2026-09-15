@@ -22,11 +22,49 @@ public interface IPaymentProvider
         CancellationToken ct = default);
 
     /// <summary>
+    /// Creates a provider subaccount that disbursements settle to. Used for the
+    /// member's bank details so the member is paid through their subaccount
+    /// after the Guarantor's payment is confirmed (ADR-044).
+    /// </summary>
+    Task<PaymentProviderResult> CreateSubaccountAsync(
+        CreateSubaccountRequest request,
+        CancellationToken ct = default);
+
+    /// <summary>
     /// Initiates a transfer to a previously-created recipient. Sending this
     /// request does <b>not</b> establish final status — confirmation comes from
     /// a provider webhook.
     /// </summary>
     Task<PaymentProviderResult> InitiateTransferAsync(
         InitiateTransferRequest request,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// Estimates the fee and gross amount the payer must pay so that roughly
+    /// <paramref name="amount"/> is available after provider charges. Used only
+    /// for display; the provider's fee at confirmation is authoritative.
+    /// </summary>
+    Task<CollectionChargeEstimateResult> EstimateCollectionChargeAsync(
+        decimal amount,
+        string currency,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// Initializes a collection (money-in) from a Guarantor into the platform
+    /// account. Returns a provider checkout URL the Guarantor is redirected to.
+    /// Sending this request does <b>not</b> establish payment — confirmation
+    /// comes from a provider webhook or verification.
+    /// </summary>
+    Task<CollectionInitiationResult> InitializeCollectionAsync(
+        CollectionInitiationRequest request,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// Verifies a collection by its provider reference. The provider is
+    /// authoritative for whether the payment succeeded, the amount paid and the
+    /// fee charged.
+    /// </summary>
+    Task<CollectionVerificationResult> VerifyCollectionAsync(
+        string providerReference,
         CancellationToken ct = default);
 }

@@ -41,8 +41,9 @@ public class LoanService
     /// <list type="bullet">
     ///   <item>The fund exists and is active.</item>
     ///   <item>The caller is an active member of the fund.</item>
-    ///   <item>The member does not already have an active disbursed loan in this fund.</item>
+        ///   <item>The member does not already have an active loan (Pending, Approved or Disbursed) in any fund.</item>
     ///   <item>The member does not already have a pending request in this fund.</item>
+    ///   <item>For Family funds, the member holds a contribution (Fund Credit) in the fund.</item>
     ///   <item>The requested amount is within the member's borrowing entitlement (Family) or fund capacity.</item>
     ///   <item>The fund has sufficient available lending capacity.</item>
     /// </list>
@@ -66,11 +67,13 @@ public class LoanService
             throw new InvalidLoanException("You are not an active member of that fund.");
         }
 
-        // One active disbursed loan per member per fund.
-        var activeCount = await _loanRepository.CountActiveDisbursedByMemberInFundAsync(memberId, fund.Id, ct);
+        // A member can only hold one active loan at a time, regardless of which
+        // of their funds it is in. They may not request another until it is
+        // completed.
+        var activeCount = await _loanRepository.CountActiveByMemberAsync(memberId, ct);
         if (activeCount > 0)
         {
-            throw new InvalidLoanException("You already have an active loan in this fund. Complete it before requesting another.");
+            throw new InvalidLoanException("You already have an active loan. Complete it before requesting another.");
         }
 
         // One pending request at a time per member per fund.
@@ -87,6 +90,14 @@ public class LoanService
         {
             // Family funds have no interest.
             interestRate = 0m;
+
+            // A member must hold a contribution (Fund Credit) in the Family fund
+            // before they can borrow from it.
+            var fundCredit = await _contributionRepository.GetConfirmedFundCreditAsync(memberId, fund.Id, ct);
+            if (fundCredit <= 0)
+            {
+                throw new InvalidLoanException("You need to contribute to this Family fund before requesting a loan.");
+            }
 
             // Funding source depends on transition state.
             fundingSource = fund.Status == FundStatus.Transitioned
@@ -217,6 +228,65 @@ public class LoanService
     }
 
     /// <summary>
+    /// Member cancels their own pending loan request. Only a Pending request can
+    /// be withdrawn by the member; approved or disbursed loans are not cancellable
+    /// by the member.
+    /// </summary>
+    public async Task<LoanDto> CancelLoanByMemberAsync(
+        Guid memberId,
+        Guid loanId,
+        CancellationToken ct = default)
+    {
+        var loan = await _loanRepository.GetByIdAsync(loanId, ct)
+            ?? throw new InvalidLoanException("Loan not found.");
+
+        if (loan.MemberId != memberId)
+        {
+            throw new InvalidLoanException("You can only cancel your own loan request.");
+        }
+
+        var fund = await _fundRepository.GetByIdAsync(loan.FundId, ct)
+            ?? throw new InvalidLoanException("Fund not found.");
+
+        loan.CancelByMember(memberId);
+
+        await _auditLog.RecordAsync(memberId, "Loan.Cancelled", "Loan", loan.Id,
+            "Cancelled pending loan request", ct);
+        await _loanRepository.SaveChangesAsync(ct);
+
+        return ToLoanDto(loan, fund);
+    }
+
+    /// <summary>
+    /// Guarantor cancels a pending or approved (not yet disbursed) loan in one of
+    /// their funds. Disbursed and completed loans can never be cancelled.
+    /// </summary>
+    public async Task<LoanDto> CancelLoanByGuarantorAsync(
+        Guid guarantorId,
+        Guid loanId,
+        CancellationToken ct = default)
+    {
+        var loan = await _loanRepository.GetByIdAsync(loanId, ct)
+            ?? throw new InvalidLoanException("Loan not found.");
+
+        var fund = await _fundRepository.GetByIdAsync(loan.FundId, ct)
+            ?? throw new InvalidLoanException("Fund not found.");
+
+        if (fund.GuarantorId != guarantorId)
+        {
+            throw new InvalidLoanException("You do not have permission to cancel this loan.");
+        }
+
+        loan.CancelByGuarantor(guarantorId);
+
+        await _auditLog.RecordAsync(guarantorId, "Loan.Cancelled", "Loan", loan.Id,
+            "Guarantor cancelled loan before disbursement", ct);
+        await _loanRepository.SaveChangesAsync(ct);
+
+        return ToLoanDto(loan, fund);
+    }
+
+    /// <summary>
     /// Returns pending loan requests for the Guarantor's review queue.
     /// </summary>
     public async Task<IReadOnlyList<LoanDto>> GetPendingRequestsForGuarantorAsync(
@@ -224,7 +294,7 @@ public class LoanService
         CancellationToken ct = default)
     {
         var items = await _loanRepository.GetPendingForGuarantorAsync(guarantorId, ct);
-        return items.Select(i => ToLoanDto(i.Loan, i.FundName, i.MemberDisplayName, i.MemberEmail)).ToList();
+        return items.Select(i => ToLoanDto(i.Loan, i.FundName, i.FundType, i.MemberDisplayName, i.MemberEmail)).ToList();
     }
 
     /// <summary>
@@ -235,7 +305,7 @@ public class LoanService
         CancellationToken ct = default)
     {
         var items = await _loanRepository.GetByFundAsync(fundId, ct);
-        return items.Select(i => ToLoanDto(i.Loan, i.FundName, i.MemberDisplayName, i.MemberEmail)).ToList();
+        return items.Select(i => ToLoanDto(i.Loan, i.FundName, i.FundType, i.MemberDisplayName, i.MemberEmail)).ToList();
     }
 
     /// <summary>
@@ -270,7 +340,7 @@ public class LoanService
         CancellationToken ct = default)
     {
         var items = await _loanRepository.GetByMemberAsync(memberId, ct);
-        return items.Select(i => ToLoanDto(i.Loan, i.FundName, i.MemberDisplayName, i.MemberEmail)).ToList();
+        return items.Select(i => ToLoanDto(i.Loan, i.FundName, i.FundType, i.MemberDisplayName, i.MemberEmail)).ToList();
     }
 
     /// <summary>
@@ -347,6 +417,7 @@ public class LoanService
         Id = loan.Id,
         FundId = loan.FundId,
         FundName = fund.Name,
+        FundType = fund.Type,
         MemberId = loan.MemberId,
         MemberDisplayName = string.Empty,
         MemberEmail = string.Empty,
@@ -365,13 +436,15 @@ public class LoanService
         RequestedAtUtc = loan.RequestedAtUtc,
         ApprovedAtUtc = loan.ApprovedAtUtc,
         RejectedAtUtc = loan.RejectedAtUtc,
+        CancelledAtUtc = loan.CancelledAtUtc,
     };
 
-    private static LoanDto ToLoanDto(Loan loan, string fundName, string memberDisplayName, string memberEmail) => new()
+    private static LoanDto ToLoanDto(Loan loan, string fundName, Domain.Funds.FundType fundType, string memberDisplayName, string memberEmail) => new()
     {
         Id = loan.Id,
         FundId = loan.FundId,
         FundName = fundName,
+        FundType = fundType,
         MemberId = loan.MemberId,
         MemberDisplayName = memberDisplayName,
         MemberEmail = memberEmail,
@@ -390,5 +463,6 @@ public class LoanService
         RequestedAtUtc = loan.RequestedAtUtc,
         ApprovedAtUtc = loan.ApprovedAtUtc,
         RejectedAtUtc = loan.RejectedAtUtc,
+        CancelledAtUtc = loan.CancelledAtUtc,
     };
 }

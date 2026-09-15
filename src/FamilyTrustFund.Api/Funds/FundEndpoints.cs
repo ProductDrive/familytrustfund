@@ -121,6 +121,53 @@ public static class FundEndpoints
             }
         });
 
+        // Transition state for a Guarantor-owned fund (Family Capital readiness).
+        // Family Contributions and Committed Capital are always reported as
+        // separate pools. The transition itself never happens automatically.
+        group.MapGet("/{id:guid}/transition-status", async (
+            Guid id,
+            HttpContext http,
+            UserManager<ApplicationUser> userManager,
+            FundTransitionService transitionService,
+            CancellationToken ct) =>
+        {
+            var userId = UserId(http, userManager);
+            if (userId is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            var status = await transitionService.GetTransitionStatusAsync(userId.Value, id, ct);
+            return status is null ? Results.NotFound() : Results.Ok(status);
+        });
+
+        // Manual, one-way transition to Family Capital. Eligibility is validated
+        // server-side against confirmed Family Contributions; the client cannot
+        // force an ineligible transition.
+        group.MapPost("/{id:guid}/transition", async (
+            Guid id,
+            HttpContext http,
+            UserManager<ApplicationUser> userManager,
+            FundTransitionService transitionService,
+            CancellationToken ct) =>
+        {
+            var userId = UserId(http, userManager);
+            if (userId is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            try
+            {
+                var result = await transitionService.TransitionToFamilyCapitalAsync(userId.Value, id, ct);
+                return result is null ? Results.NotFound() : Results.Ok(result);
+            }
+            catch (InvalidFundException ex)
+            {
+                return Results.BadRequest(new { message = ex.Message });
+            }
+        });
+
         return app;
     }
 
@@ -146,6 +193,7 @@ internal static class FundDtoMapper
         InterestRate = fund.InterestRate,
         HowItWorks = fund.HowItWorks,
         Status = fund.Status,
+        TransitionedAtUtc = fund.TransitionedAtUtc,
         CreatedAtUtc = fund.CreatedAtUtc,
     };
 }

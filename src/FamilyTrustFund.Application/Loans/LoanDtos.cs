@@ -1,3 +1,4 @@
+using FamilyTrustFund.Domain.Funds;
 using FamilyTrustFund.Domain.Loans;
 
 namespace FamilyTrustFund.Application.Loans;
@@ -59,6 +60,17 @@ public sealed class RejectLoanRequest
 }
 
 /// <summary>
+/// Cancellation of a loan that has not been disbursed.
+/// Members cancel their own pending requests; Guarantors cancel pending or
+/// approved loans in their funds. Disbursed/completed loans never cancel.
+/// </summary>
+public sealed class CancelLoanRequest
+{
+    /// <summary>Loan ID to cancel.</summary>
+    public Guid LoanId { get; init; }
+}
+
+/// <summary>
 /// Server-calculated representation of a loan returned to clients.
 /// </summary>
 public sealed class LoanDto
@@ -66,6 +78,7 @@ public sealed class LoanDto
     public Guid Id { get; init; }
     public Guid FundId { get; init; }
     public string FundName { get; init; } = string.Empty;
+    public FundType FundType { get; init; }
     public Guid MemberId { get; init; }
     public string MemberDisplayName { get; init; } = string.Empty;
     public string MemberEmail { get; init; } = string.Empty;
@@ -84,6 +97,7 @@ public sealed class LoanDto
     public DateTime RequestedAtUtc { get; init; }
     public DateTime? ApprovedAtUtc { get; init; }
     public DateTime? RejectedAtUtc { get; init; }
+    public DateTime? CancelledAtUtc { get; init; }
 }
 
 /// <summary>

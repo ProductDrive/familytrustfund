@@ -1,8 +1,10 @@
 using System.Security.Claims;
+using FamilyTrustFund.Api.Antiforgery;
 using FamilyTrustFund.Api.Auth;
 using FamilyTrustFund.Api.Administration;
 using FamilyTrustFund.Api.Authorization;
 using FamilyTrustFund.Api.Contributions;
+using FamilyTrustFund.Api.Evidence;
 using FamilyTrustFund.Api.Funds;
 using FamilyTrustFund.Api.Loans;
 using FamilyTrustFund.Api.Membership;
@@ -11,8 +13,10 @@ using FamilyTrustFund.Api.Repayments;
 using FamilyTrustFund.Application.Payments;
 using FamilyTrustFund.Domain.Auth;
 using FamilyTrustFund.Infrastructure.Data;
+using FamilyTrustFund.Infrastructure.Evidence;
 using FamilyTrustFund.Infrastructure.Identity;
 using FamilyTrustFund.Infrastructure.Payments;
+using FamilyTrustFund.Infrastructure.Storage;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.OpenApi;
@@ -31,6 +35,7 @@ builder.Services.AddDbContext<ApplicationDbContext>(options =>
 builder.Services.AddScoped<FamilyTrustFund.Application.Audit.IAuditLog, FamilyTrustFund.Infrastructure.Audit.AuditLog>();
 builder.Services.AddScoped<FamilyTrustFund.Application.Funds.IFundRepository, FamilyTrustFund.Infrastructure.Funds.FundRepository>();
 builder.Services.AddScoped<FamilyTrustFund.Application.Funds.FundService>();
+builder.Services.AddScoped<FamilyTrustFund.Application.Funds.FundTransitionService>();
 builder.Services.AddScoped<FamilyTrustFund.Application.Membership.IMembershipRepository, FamilyTrustFund.Infrastructure.Membership.MembershipRepository>();
 builder.Services.AddScoped<FamilyTrustFund.Application.Membership.MembershipService>();
 builder.Services.AddScoped<FamilyTrustFund.Application.Loans.ILoanRepository, FamilyTrustFund.Infrastructure.Loans.LoanRepository>();
@@ -47,9 +52,19 @@ builder.Services.AddHttpClient<PaystackPaymentProvider>((sp, client) =>
 builder.Services.AddScoped<IPaymentProvider>(sp => sp.GetRequiredService<PaystackPaymentProvider>());
 builder.Services.AddScoped<IPaymentProviderRegistry, PaymentProviderRegistry>();
 builder.Services.AddScoped<FamilyTrustFund.Application.Payments.IPaymentRepository, FamilyTrustFund.Infrastructure.Payments.PaymentRepository>();
+builder.Services.AddScoped<FamilyTrustFund.Application.Payments.ICapitalFundingRepository, FamilyTrustFund.Infrastructure.Payments.CapitalFundingRepository>();
 builder.Services.AddScoped<DisbursementService>();
+builder.Services.AddScoped<FamilyTrustFund.Application.Payments.CapitalFundingService>();
 builder.Services.AddScoped<FamilyTrustFund.Application.Repayments.IRepaymentRepository, FamilyTrustFund.Infrastructure.Repayments.RepaymentRepository>();
 builder.Services.AddScoped<FamilyTrustFund.Application.Repayments.RepaymentService>();
+builder.Services.AddScoped<FamilyTrustFund.Application.Repayments.IPendingRepaymentRepository, FamilyTrustFund.Infrastructure.Repayments.PendingRepaymentRepository>();
+builder.Services.AddScoped<FamilyTrustFund.Application.Repayments.PendingRepaymentService>();
+
+// ---- Evidence + storage (Phase 14): payment evidence attachments ----
+builder.Services.Configure<FileSystemStorageOptions>(builder.Configuration.GetSection(FileSystemStorageOptions.SectionName));
+builder.Services.AddSingleton<FamilyTrustFund.Application.Storage.IFileStorage, FileSystemStorage>();
+builder.Services.AddScoped<FamilyTrustFund.Application.Evidence.IEvidenceRepository, EvidenceRepository>();
+builder.Services.AddScoped<FamilyTrustFund.Application.Evidence.EvidenceService>();
 
 // ---- JSON options (readable string enums in API contracts) ----
 // Enums are serialized with their exact member names (e.g. "Active",
@@ -58,6 +73,15 @@ builder.Services.AddScoped<FamilyTrustFund.Application.Repayments.RepaymentServi
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
     options.SerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
+});
+
+// Anti-forgery for form-based (multipart) endpoints such as payment
+// evidence uploads. Minimal API endpoints that bind IFormFile automatically
+// carry anti-forgery metadata; this service registers the validator and
+// app.UseAntiforgery() enables the middleware.
+builder.Services.AddAntiforgery(options =>
+{
+    options.FormFieldName = "__RequestVerificationToken";
 });
 
 // ---- ASP.NET Core Identity ----
@@ -189,18 +213,24 @@ if (enableApiDocs)
 app.UseCors();
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseAntiforgery();
 
 app.MapAuthEndpoints();
+app.MapAntiforgeryEndpoints();
 app.MapFundEndpoints();
 app.MapMembershipEndpoints();
 app.MapLoanEndpoints();
 app.MapContributionEndpoints();
+app.MapEvidenceEndpoints();
 app.MapPaymentEndpoints();
+app.MapCapitalFundingEndpoints();
 app.MapRepaymentEndpoints();
+app.MapPendingRepaymentEndpoints();
 app.MapAdminEndpoints();
 if (app.Environment.IsDevelopment())
 {
     app.MapDevAuthEndpoints();
+    app.MapDevPaymentEndpoints();
 }
 
 app.MapGet("/api/health", () => Results.Ok(new { status = "ok" }));

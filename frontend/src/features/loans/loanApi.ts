@@ -9,15 +9,19 @@ export type LoanStatus =
   | 'Disbursed'
   | 'Completed'
   | 'Defaulted'
+  | 'Cancelled'
 
 export type RepaymentFrequency = 'Weekly' | 'Biweekly' | 'Monthly'
 
 export type LoanFundingSource = 'GuarantorCapital' | 'FamilyCapital'
 
+export type FundType = 'Family' | 'External'
+
 export interface Loan {
   id: string
   fundId: string
   fundName: string
+  fundType: FundType
   memberId: string
   memberDisplayName: string
   memberEmail: string
@@ -36,6 +40,11 @@ export interface Loan {
   requestedAtUtc: string
   approvedAtUtc: string | null
   rejectedAtUtc: string | null
+  cancelledAtUtc: string | null
+}
+
+export interface CancelLoanInput {
+  loanId: string
 }
 
 export interface LendingCapacity {
@@ -93,6 +102,17 @@ export function useRequestLoan() {
   })
 }
 
+export function useCancelLoan() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: CancelLoanInput) =>
+      api.post<Loan>(`/loans/${input.loanId}/cancel`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['loans'] })
+    },
+  })
+}
+
 // ── Guarantor hooks ─────────────────────────────────────────────────
 
 export function useGuarantorPendingLoans() {
@@ -127,6 +147,18 @@ export function useRejectLoan() {
   return useMutation({
     mutationFn: (input: RejectLoanInput) =>
       api.post<Loan>('/guarantor/loans/reject', input),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['guarantor', 'loans'] })
+      qc.invalidateQueries({ queryKey: ['loans'] })
+    },
+  })
+}
+
+export function useGuarantorCancelLoan() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: CancelLoanInput) =>
+      api.post<Loan>('/guarantor/loans/cancel', { loanId: input.loanId }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['guarantor', 'loans'] })
       qc.invalidateQueries({ queryKey: ['loans'] })

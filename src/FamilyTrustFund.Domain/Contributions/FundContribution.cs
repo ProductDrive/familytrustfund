@@ -32,6 +32,9 @@ public class FundContribution
     /// <summary>Rejection reason supplied by the Guarantor.</summary>
     public string? RejectionReason { get; private set; }
 
+    /// <summary>Optional free-text note added by the Guarantor when confirming.</summary>
+    public string? ConfirmationNote { get; private set; }
+
     public DateTime ReportedAtUtc { get; private set; }
     public DateTime? ConfirmedAtUtc { get; private set; }
     public DateTime? RejectedAtUtc { get; private set; }
@@ -95,14 +98,20 @@ public class FundContribution
     /// <summary>
     /// Guarantor confirms a pending contribution, posting it to Fund Credit.
     /// </summary>
-    public void Confirm()
+    public void Confirm(string? note = null)
     {
         if (Status != ContributionStatus.PendingConfirmation)
         {
             throw new InvalidContributionException("Only pending contributions can be confirmed.");
         }
 
+        if (note is not null && note.Length > 1000)
+        {
+            throw new InvalidContributionException("Confirmation note cannot exceed 1000 characters.");
+        }
+
         Status = ContributionStatus.Confirmed;
+        ConfirmationNote = string.IsNullOrWhiteSpace(note) ? null : note.Trim();
         ConfirmedAtUtc = DateTime.UtcNow;
         Touch();
     }

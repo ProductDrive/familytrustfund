@@ -87,6 +87,7 @@ public class FundTests
         var fund = Fund.Create(Guarantor, "F", FundType.Family, 100, "ABCD1234");
         fund.MarkTransitioned();
         fund.Status.Should().Be(FundStatus.Transitioned);
+        fund.TransitionedAtUtc.Should().NotBeNull();
         var second = () => fund.MarkTransitioned();
         second.Should().Throw<InvalidFundException>();
     }

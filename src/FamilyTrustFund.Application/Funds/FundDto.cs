@@ -16,5 +16,6 @@ public sealed class FundDto
     public decimal? InterestRate { get; init; }
     public string? HowItWorks { get; init; }
     public FundStatus Status { get; init; }
+    public DateTime? TransitionedAtUtc { get; init; }
     public DateTime CreatedAtUtc { get; init; }
 }

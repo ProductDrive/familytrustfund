@@ -1,16 +1,19 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { HandCoins, CircleDollarSign } from 'lucide-react'
+import { HandCoins, CircleDollarSign, X } from 'lucide-react'
 import { useMyMemberships } from '../membership/membershipApi'
-import { useMyLoans, useRequestLoan } from './loanApi'
+import { useMyLoans, useRequestLoan, useCancelLoan } from './loanApi'
+import type { Loan } from './loanApi'
 import { useMyLoanDisbursement } from '../payments/paymentApi'
 import { MemberBankDetails } from '../payments/MemberBankDetails'
 import { PageHeader } from '../../components/ui/PageHeader'
 import { Card } from '../../components/ui/Card'
 import { StatusBadge } from '../../components/ui/Badge'
 import { Button } from '../../components/ui/Button'
+import { AmountInput } from '../../components/ui/AmountInput'
 import { EmptyState, SkeletonCard } from '../../components/ui/State'
 import { MoneyDisplay } from '../../lib/money'
+import { formatShortDate } from '../../lib/formatDate'
 
 const FREQUENCIES = ['Weekly', 'Biweekly', 'Monthly'] as const
 
@@ -19,6 +22,29 @@ function DisbursementCell({ loanId }: { loanId: string }) {
   if (isLoading) return <span className="cell-secondary">…</span>
   if (!disbursement) return <span className="cell-secondary">—</span>
   return <StatusBadge status={disbursement.status} withDot />
+}
+
+function CancelLoanButton({ loan }: { loan: Loan }) {
+  const cancel = useCancelLoan()
+  if (loan.status !== 'Pending') return null
+
+  return (
+    <Button
+      variant="ghost"
+      disabled={cancel.isPending}
+      onClick={() => {
+        if (
+          window.confirm(
+            'Cancel this loan request? It will be withdrawn before the Guarantor reviews it.',
+          )
+        ) {
+          cancel.mutate({ loanId: loan.id })
+        }
+      }}
+    >
+      <X size={14} /> {cancel.isPending ? 'Cancelling…' : 'Cancel request'}
+    </Button>
+  )
 }
 
 function LoanRequestForm({ onDone }: { onDone: () => void }) {
@@ -77,13 +103,10 @@ function LoanRequestForm({ onDone }: { onDone: () => void }) {
 
         <div className="field">
           <label htmlFor="loan-amount">Amount (₦)</label>
-          <input
+          <AmountInput
             id="loan-amount"
-            type="number"
-            min="1"
-            step="0.01"
             value={amount}
-            onChange={(e) => setAmount(e.target.value)}
+            onChange={setAmount}
             placeholder="e.g. 50000"
             required
           />
@@ -176,6 +199,7 @@ export function MemberLoansPage() {
                 <th>Status</th>
                 <th>Disbursement</th>
                 <th>Requested</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -183,11 +207,7 @@ export function MemberLoansPage() {
                 <tr key={l.id}>
                   <td>
                     <strong>{l.fundName}</strong>
-                    <div className="cell-secondary">
-                      {l.approvedAmount != null
-                        ? `Approved ₦${l.approvedAmount.toLocaleString()}`
-                        : 'Awaiting approval'}
-                    </div>
+                    <div className="cell-secondary">{l.fundType}</div>
                   </td>
                   <td>
                     <MoneyDisplay amount={l.requestedAmount} />
@@ -200,7 +220,10 @@ export function MemberLoansPage() {
                     <DisbursementCell loanId={l.id} />
                   </td>
                   <td className="cell-secondary">
-                    {new Date(l.requestedAtUtc).toLocaleDateString()}
+                    {formatShortDate(l.requestedAtUtc)}
+                  </td>
+                  <td>
+                    <CancelLoanButton loan={l} />
                   </td>
                 </tr>
               ))}

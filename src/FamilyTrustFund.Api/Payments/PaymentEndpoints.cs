@@ -127,7 +127,12 @@ public static class PaymentEndpoints
 
             try
             {
-                var disbursement = await disbursementService.InitiateDisbursementAsync(userId.Value, request, ct);
+                // The Guarantor pays this disbursement (ADR-044), so they need to
+                // complete the checkout at the returned URL. Their email drives the
+                // provider collection.
+                var payerEmail = await PayerEmailAsync(http, userManager, ct);
+                var disbursement = await disbursementService.InitiateDisbursementAsync(
+                    userId.Value, request, payerEmail, request.CallbackUrl, ct);
                 return Results.Ok(disbursement);
             }
             catch (InvalidPaymentException ex)
@@ -167,6 +172,7 @@ public static class PaymentEndpoints
             HttpRequest request,
             IPaymentProviderRegistry providers,
             DisbursementService disbursementService,
+            CapitalFundingService capitalFundingService,
             CancellationToken ct) =>
         {
             using var reader = new StreamReader(request.Body, Encoding.UTF8);
@@ -193,18 +199,42 @@ public static class PaymentEndpoints
                 }
 
                 var status = MapTransferStatus(eventName);
-                if (status is null)
+                if (status is not null)
                 {
-                    // Unrelated/unknown event; acknowledge so the provider doesn't retry pointlessly.
-                    return Results.Ok(new { status = "ignored" });
+                    var result = await disbursementService.ProcessProviderWebhookAsync(
+                        "Paystack", eventId, reference, status.Value, ct: ct);
+
+                    return result is null
+                        ? Results.Ok(new { status = "duplicate" })
+                        : Results.Ok(new { status = "processed" });
                 }
 
-                var result = await disbursementService.ProcessProviderWebhookAsync(
-                    "Paystack", eventId, reference, status.Value, ct: ct);
+                if (eventName is "charge.success" or "charge.failed")
+                {
+                    var chargePaid = eventName == "charge.success";
+                    var feeKobo = GetLong(data, "fees");
+                    decimal? fee = feeKobo is null ? null : PaystackPaymentProvider.FromMinorUnits(feeKobo.Value);
 
-                return result is null
-                    ? Results.Ok(new { status = "duplicate" })
-                    : Results.Ok(new { status = "processed" });
+                    var capResult = await capitalFundingService.ProcessChargeWebhookAsync(
+                        "Paystack", eventId, reference, chargePaid, fee, eventName, ct);
+
+                    // Charge events are the production confirmation for a
+                    // Guarantor's per-loan payment (ADR-044), so they also
+                    // finalise the linked disbursement: a success marks the loan
+                    // DISBURSED, a failure leaves it recoverable for retry. On
+                    // localhost the webhook cannot reach the app, so the Guarantor
+                    // verifies through the endpoint instead; both paths are
+                    // idempotent with each other.
+                    await disbursementService.FinaliseDisbursementForChargeAsync(
+                        eventId, reference, chargePaid, eventName, ct);
+
+                    return capResult is null
+                        ? Results.Ok(new { status = "duplicate" })
+                        : Results.Ok(new { status = "processed" });
+                }
+
+                // Unrelated/unknown event; acknowledge so the provider doesn't retry pointlessly.
+                return Results.Ok(new { status = "ignored" });
             }
             catch (InvalidPaymentException ex)
             {
@@ -240,6 +270,30 @@ public static class PaymentEndpoints
         }
 
         return null;
+    }
+
+    private static long? GetLong(JsonElement element, string property)
+    {
+        if (!element.TryGetProperty(property, out var current))
+        {
+            return null;
+        }
+
+        return current.ValueKind switch
+        {
+            JsonValueKind.Number when current.TryGetInt64(out var number) => number,
+            JsonValueKind.String when long.TryParse(current.GetString(), out var parsed) => parsed,
+            _ => null,
+        };
+    }
+
+    private static async Task<string?> PayerEmailAsync(
+        HttpContext http,
+        UserManager<ApplicationUser> userManager,
+        CancellationToken ct)
+    {
+        var user = await userManager.GetUserAsync(http.User);
+        return user?.Email;
     }
 
     private static Guid? UserId(HttpContext http, UserManager<ApplicationUser> userManager)

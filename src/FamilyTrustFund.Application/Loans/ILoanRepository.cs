@@ -1,3 +1,4 @@
+using FamilyTrustFund.Domain.Funds;
 using FamilyTrustFund.Domain.Loans;
 
 namespace FamilyTrustFund.Application.Loans;
@@ -27,9 +28,12 @@ public interface ILoanRepository
     Task<IReadOnlyList<LoanWithDetails>> GetByMemberAsync(Guid memberId, CancellationToken ct = default);
 
     /// <summary>
-    /// Counts active disbursed loans for a member within a specific fund.
+    /// Counts the active loans for a member across all their funds. A member may
+    /// not hold more than one active loan at a time regardless of which fund(s)
+    /// they belong to. A loan is "active" and blocks new requests while it is
+    /// Pending, Approved or Disbursed (i.e. anything not yet terminal/resolved).
     /// </summary>
-    Task<int> CountActiveDisbursedByMemberInFundAsync(Guid memberId, Guid fundId, CancellationToken ct = default);
+    Task<int> CountActiveByMemberAsync(Guid memberId, CancellationToken ct = default);
 
     /// <summary>
     /// Sums the total active disbursed loan amounts for a fund.
@@ -58,5 +62,6 @@ public sealed class LoanWithDetails
     public string MemberEmail { get; init; } = string.Empty;
     public Guid FundId { get; init; }
     public string FundName { get; init; } = string.Empty;
+    public FundType FundType { get; init; }
     public Guid GuarantorId { get; init; }
 }

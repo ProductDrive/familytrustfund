@@ -65,6 +65,8 @@ public class LoanConfiguration : IEntityTypeConfiguration<Loan>
         builder.Property(l => l.RejectionReason)
             .HasMaxLength(1000);
 
+        builder.Property(l => l.CancelledByUserId);
+
         builder.Property(l => l.RequestedAtUtc).IsRequired();
         builder.Property(l => l.CreatedAtUtc).IsRequired();
         builder.Property(l => l.UpdatedAtUtc).IsRequired();

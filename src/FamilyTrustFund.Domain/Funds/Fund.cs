@@ -32,6 +32,12 @@ public class Fund
     public DateTime CreatedAtUtc { get; private set; } = DateTime.UtcNow;
     public DateTime UpdatedAtUtc { get; private set; } = DateTime.UtcNow;
 
+    /// <summary>
+    /// When this Family fund transitioned to Family Capital. Null until the
+    /// one-way transition (ADR-008) is confirmed by the Guarantor.
+    /// </summary>
+    public DateTime? TransitionedAtUtc { get; private set; }
+
     protected Fund() { }
 
     public static Fund Create(
@@ -172,6 +178,7 @@ public class Fund
         }
 
         Status = FundStatus.Transitioned;
+        TransitionedAtUtc = DateTime.UtcNow;
         Touch();
     }
 

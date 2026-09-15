@@ -1,4 +1,5 @@
 using FamilyTrustFund.Domain.Contributions;
+using FamilyTrustFund.Domain.Evidence;
 using FamilyTrustFund.Domain.Funds;
 using FamilyTrustFund.Domain.Loans;
 using FamilyTrustFund.Domain.Membership;
@@ -33,10 +34,13 @@ public class ApplicationDbContext : IdentityDbContext<
     public DbSet<FundContribution> FundContributions => Set<FundContribution>();
     public DbSet<PaymentRecipient> PaymentRecipients => Set<PaymentRecipient>();
     public DbSet<DisbursementTransaction> DisbursementTransactions => Set<DisbursementTransaction>();
+    public DbSet<CapitalTransaction> CapitalTransactions => Set<CapitalTransaction>();
     public DbSet<LoanSchedule> LoanSchedules => Set<LoanSchedule>();
     public DbSet<LoanScheduleItem> LoanScheduleItems => Set<LoanScheduleItem>();
     public DbSet<Repayment> Repayments => Set<Repayment>();
+    public DbSet<PendingRepayment> PendingRepayments => Set<PendingRepayment>();
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
+    public DbSet<PaymentEvidence> PaymentEvidences => Set<PaymentEvidence>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {

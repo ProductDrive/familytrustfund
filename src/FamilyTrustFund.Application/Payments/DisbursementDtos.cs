@@ -19,6 +19,13 @@ public sealed class SaveRecipientRequest
 public sealed class InitiateDisbursementRequest
 {
     public Guid LoanId { get; init; }
+
+    /// <summary>
+    /// Where the provider should return the Guarantor after checkout. The
+    /// provider identifies the transaction via the <c>reference</c> query
+    /// parameter it appends. Only http(s) URLs are accepted.
+    /// </summary>
+    public string? CallbackUrl { get; init; }
 }
 
 /// <summary>
@@ -41,7 +48,10 @@ public sealed class PaymentRecipientDto
 }
 
 /// <summary>
-/// Server-authoritative disbursement representation.
+/// Server-authoritative disbursement representation. When the loan is awaiting
+/// the Guarantor's payment, the payout-related fields (<c>AuthorizationUrl</c>,
+/// <c>GrossAmount</c>, <c>EstimatedFee</c>, <c>CapitalTransactionId</c>) are
+/// populated; otherwise they are null.
 /// </summary>
 public sealed class DisbursementDto
 {
@@ -55,4 +65,16 @@ public sealed class DisbursementDto
     public string? FailureReason { get; init; }
     public DateTime InitiatedAtUtc { get; init; }
     public DateTime? CompletedAtUtc { get; init; }
+
+    /// <summary>Provider checkout URL the Guarantor must complete to pay for this disbursement.</summary>
+    public string? AuthorizationUrl { get; init; }
+
+    /// <summary>Gross amount the Guarantor pays (approved amount + fee).</summary>
+    public decimal? GrossAmount { get; init; }
+
+    /// <summary>Estimated provider fee for display; the confirmed fee is authoritative.</summary>
+    public decimal? EstimatedFee { get; init; }
+
+    /// <summary>The per-loan capital payment funding this disbursement.</summary>
+    public Guid? CapitalTransactionId { get; init; }
 }

@@ -75,14 +75,15 @@ public static class RepaymentEndpoints
             return Results.Ok(history);
         });
 
-        // Record a scheduled instalment payment (Member).
-        memberGroup.MapPost("/{loanId:guid}/repayments", async (
-            Guid loanId,
+        // All repayment history for the member across every loan (paginated).
+        // Shown even when the member has no currently active loan.
+        memberGroup.MapGet("/repayments/history/mine", async (
             HttpContext http,
             UserManager<ApplicationUser> userManager,
             RepaymentService repaymentService,
-            [FromBody] MakeRepaymentRequest request,
-            CancellationToken ct) =>
+            CancellationToken ct,
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 10) =>
         {
             var userId = UserId(http, userManager);
             if (userId is null)
@@ -90,108 +91,11 @@ public static class RepaymentEndpoints
                 return Results.Unauthorized();
             }
 
-            request = Normalise(request, loanId);
-            if (request is null)
-            {
-                return Results.BadRequest(new { message = "Loan id mismatch." });
-            }
-
-            try
-            {
-                var summary = await repaymentService.MakePaymentAsync(
-                    userId.Value, request, RepaymentKind.Scheduled, ct);
-                return Results.Ok(summary);
-            }
-            catch (InvalidRepaymentException ex)
-            {
-                return Results.BadRequest(new { message = ex.Message });
-            }
-        });
-
-        // Record a lump-sum payment (Member).
-        memberGroup.MapPost("/{loanId:guid}/repayments/lump-sum", async (
-            Guid loanId,
-            HttpContext http,
-            UserManager<ApplicationUser> userManager,
-            RepaymentService repaymentService,
-            [FromBody] MakeRepaymentRequest request,
-            CancellationToken ct) =>
-        {
-            var userId = UserId(http, userManager);
-            if (userId is null)
-            {
-                return Results.Unauthorized();
-            }
-
-            request = Normalise(request, loanId);
-            if (request is null)
-            {
-                return Results.BadRequest(new { message = "Loan id mismatch." });
-            }
-
-            try
-            {
-                var summary = await repaymentService.MakePaymentAsync(
-                    userId.Value, request, RepaymentKind.LumpSum, ct);
-                return Results.Ok(summary);
-            }
-            catch (InvalidRepaymentException ex)
-            {
-                return Results.BadRequest(new { message = ex.Message });
-            }
-        });
-
-        // Fully settle a loan (Member).
-        memberGroup.MapPost("/{loanId:guid}/repayments/settle", async (
-            Guid loanId,
-            HttpContext http,
-            UserManager<ApplicationUser> userManager,
-            RepaymentService repaymentService,
-            [FromBody] MakeRepaymentRequest request,
-            CancellationToken ct) =>
-        {
-            var userId = UserId(http, userManager);
-            if (userId is null)
-            {
-                return Results.Unauthorized();
-            }
-
-            request = Normalise(request, loanId);
-            if (request is null)
-            {
-                return Results.BadRequest(new { message = "Loan id mismatch." });
-            }
-
-            try
-            {
-                var summary = await repaymentService.SettleAsync(userId.Value, request, ct);
-                return Results.Ok(summary);
-            }
-            catch (InvalidRepaymentException ex)
-            {
-                return Results.BadRequest(new { message = ex.Message });
-            }
+            var result = await repaymentService.GetMyRepaymentsAsync(userId.Value, page, pageSize, ct);
+            return Results.Ok(result);
         });
 
         return app;
-    }
-
-    /// <summary>
-    /// Binds the body request to the loan in the route, if the client omitted it.
-    /// </summary>
-    private static MakeRepaymentRequest? Normalise(MakeRepaymentRequest request, Guid loanId)
-    {
-        if (request.LoanId == Guid.Empty)
-        {
-            return new MakeRepaymentRequest
-            {
-                LoanId = loanId,
-                Amount = request.Amount,
-                Note = request.Note,
-            };
-        }
-
-        return request.LoanId == loanId ? request : null;
     }
 
     /// <summary>

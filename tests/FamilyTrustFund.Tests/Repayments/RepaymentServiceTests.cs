@@ -1,4 +1,5 @@
 using FamilyTrustFund.Application.Repayments;
+using FamilyTrustFund.Domain.Funds;
 using FamilyTrustFund.Domain.Loans;
 using FamilyTrustFund.Domain.Repayments;
 using FamilyTrustFund.Tests.Support;
@@ -111,7 +112,12 @@ public class RepaymentServiceTests
 
     private static Loan MakeDisbursedLoan(decimal amount = 100_000m, int term = 4)
     {
-        var loan = Loan.Request(FundId, MemberId, amount, RepaymentFrequency.Monthly, 10m, LoanFundingSource.GuarantorCapital);
+        return MakeDisbursedLoanFor(FundId, memberId: null, amount, term);
+    }
+
+    private static Loan MakeDisbursedLoanFor(Guid fundId, Guid? memberId = null, decimal amount = 100_000m, int term = 4)
+    {
+        var loan = Loan.Request(fundId, memberId ?? MemberId, amount, RepaymentFrequency.Monthly, 10m, LoanFundingSource.GuarantorCapital);
         var totalRepayable = amount + amount * 0.10m;
         loan.Approve(GuarantorId, amount, RepaymentFrequency.Monthly, totalRepayable, term);
         loan.MarkDisbursementPending();
@@ -139,6 +145,29 @@ public class RepaymentServiceTests
         schedule.Version.Should().Be(1);
         schedule.IsCurrent.Should().BeTrue();
         schedule.Items.Count.Should().Be(4);
+    }
+
+    [Fact]
+    public async Task EnsureScheduleAsync_is_idempotent_when_revision_already_exists()
+    {
+        // Simulates the verify endpoint and the provider webhook racing to create
+        // v1 for the same loan: the winner persists the schedule, so the loser's
+        // insert must resolve to the existing schedule instead of a duplicate-key
+        // violation (AGENTS §7.3, IX_loan_schedules_LoanId_Version stays unique).
+        var loan = MakeDisbursedLoan();
+        var repo = new FakeRepaymentRepository();
+        repo.Loans.Add(loan);
+        repo.Schedules.Add(LoanSchedule.CreateV1(
+            loan.Id, loan.ApprovedAmount!.Value, loan.TotalRepayable,
+            RepaymentFrequency.Monthly, 4, startDateUtc: DateTime.UtcNow));
+        var service = new RepaymentService(repo, new FakeAuditLog());
+
+        var schedule = await service.EnsureScheduleAsync(MemberId, loan.Id);
+        var second = await service.EnsureScheduleAsync(MemberId, loan.Id);
+
+        schedule.Id.Should().Be(second.Id);
+        schedule.Version.Should().Be(1);
+        repo.Schedules.Should().ContainSingle(s => s.LoanId == loan.Id);
     }
 
     [Fact]
@@ -258,5 +287,62 @@ public class RepaymentServiceTests
         summary.OverdueItems.Should().Be(4);
         summary.OverdueAmount.Should().Be(loan.TotalRepayable);
         summary.SettlementQuote.Should().Be(loan.OutstandingBalance);
+    }
+
+    [Fact]
+    public async Task GetMyRepayments_returns_paginated_history_across_funds()
+    {
+        var fundA = Fund.Create(GuarantorId, "Aunties Fund", FundType.Family, 1_000_000m, "AAAA");
+        var fundB = Fund.Create(GuarantorId, "Uncles Fund", FundType.Family, 1_000_000m, "BBBB");
+        var loanA = MakeDisbursedLoanFor(fundA.Id);
+        var loanB = MakeDisbursedLoanFor(fundB.Id);
+
+        var repo = new FakeRepaymentRepository();
+        repo.Funds.Add(fundA);
+        repo.Funds.Add(fundB);
+        repo.Loans.Add(loanA);
+        repo.Loans.Add(loanB);
+        repo.Repayments.Add(new Repayment(loanA.Id, 1, RepaymentKind.Scheduled, 27_500m, 27_500m, new DateTime(2026, 1, 10)));
+        repo.Repayments.Add(new Repayment(loanA.Id, 1, RepaymentKind.Scheduled, 27_500m, 30_000m, new DateTime(2026, 2, 10)));
+        repo.Repayments.Add(new Repayment(loanB.Id, 1, RepaymentKind.FullSettlement, 55_000m, 55_000m, new DateTime(2026, 3, 10)));
+
+        var service = new RepaymentService(repo, new FakeAuditLog());
+
+        var page = await service.GetMyRepaymentsAsync(MemberId, page: 1, pageSize: 2);
+
+        page.TotalCount.Should().Be(3);
+        page.Page.Should().Be(1);
+        page.PageSize.Should().Be(2);
+        page.Items.Count.Should().Be(2);
+        page.Items.Should().BeInDescendingOrder(x => x.PaidAtUtc);
+        page.Items[0].FundName.Should().Be("Uncles Fund");
+        page.Items[1].FundName.Should().Be("Aunties Fund");
+
+        var page2 = await service.GetMyRepaymentsAsync(MemberId, page: 2, pageSize: 2);
+
+        page2.Items.Count.Should().Be(1);
+        page2.Items[0].LoanId.Should().Be(loanA.Id);
+        page2.Items[0].Surplus.Should().Be(0m);
+    }
+
+    [Fact]
+    public async Task GetMyRepayments_excludes_other_members_records()
+    {
+        var loan = MakeDisbursedLoan();
+        var otherFund = Fund.Create(GuarantorId, "Other Fund", FundType.Family, 1_000_000m, "CCCC");
+        var other = MakeDisbursedLoanFor(otherFund.Id, memberId: Guid.NewGuid());
+
+        var repo = new FakeRepaymentRepository();
+        repo.Loans.Add(loan);
+        repo.Loans.Add(other);
+        repo.Repayments.Add(new Repayment(loan.Id, 1, RepaymentKind.Scheduled, 27_500m, 27_500m, new DateTime(2026, 1, 10)));
+        repo.Repayments.Add(new Repayment(other.Id, 1, RepaymentKind.Scheduled, 27_500m, 27_500m, new DateTime(2026, 2, 10)));
+
+        var service = new RepaymentService(repo, new FakeAuditLog());
+
+        var page = await service.GetMyRepaymentsAsync(MemberId);
+
+        page.TotalCount.Should().Be(1);
+        page.Items.Should().ContainSingle(r => r.LoanId == loan.Id);
     }
 }

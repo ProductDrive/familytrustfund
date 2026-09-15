@@ -27,6 +27,10 @@ export interface Disbursement {
   failureReason: string | null
   initiatedAtUtc: string
   completedAtUtc: string | null
+  authorizationUrl: string | null
+  grossAmount: number | null
+  estimatedFee: number | null
+  capitalTransactionId: string | null
 }
 
 export interface SaveRecipientInput {
@@ -38,6 +42,7 @@ export interface SaveRecipientInput {
 
 export interface InitiateDisbursementInput {
   loanId: string
+  callbackUrl?: string
 }
 
 // ── Member hooks ────────────────────────────────────────────────────
@@ -91,6 +96,7 @@ export function useDisburseLoan() {
       qc.invalidateQueries({ queryKey: ['guarantor', 'loans'] })
       qc.invalidateQueries({ queryKey: ['loans'] })
       qc.invalidateQueries({ queryKey: ['payments'] })
+      qc.invalidateQueries({ queryKey: ['guarantor', 'payments'] })
     },
   })
 }
@@ -101,5 +107,73 @@ export function useGuarantorLoanDisbursement(loanId: string | null) {
     queryFn: () => api.get<Disbursement>(`/guarantor/payments/disbursement/${loanId}`),
     enabled: !!loanId,
     retry: false,
+  })
+}
+
+// ── Funded capital (funding the platform account) ───────────────────
+
+export type CapitalTransactionStatus = 'PendingConfirmation' | 'Confirmed' | 'Failed'
+
+export interface CapitalTransaction {
+  id: string
+  fundId: string
+  provider: string
+  status: CapitalTransactionStatus
+  amountGross: number
+  providerFee: number | null
+  amountNet: number | null
+  providerReference: string
+  failureReason: string | null
+  initiatedAtUtc: string
+  completedAtUtc: string | null
+}
+
+export interface CapitalFundingSummary {
+  totalFunded: number
+  transactionCount: number
+}
+
+export interface CapitalTransactionPage {
+  items: CapitalTransaction[]
+  totalCount: number
+  page: number
+  pageSize: number
+}
+
+export function useFundCapitalSummary(fundId: string | null) {
+  return useQuery({
+    queryKey: ['guarantor', 'funds', fundId, 'capital', 'summary'],
+    queryFn: () => api.get<CapitalFundingSummary>(`/guarantor/funds/${fundId}/capital`),
+    enabled: !!fundId,
+  })
+}
+
+export function useVerifyCapitalPayment(fundId: string | null) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (providerReference: string) =>
+      api.post<CapitalTransaction>(`/guarantor/funds/${fundId}/capital/payments/${providerReference}/verify`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['guarantor', 'funds', fundId, 'capital'] })
+      qc.invalidateQueries({ queryKey: ['guarantor', 'loans'] })
+      qc.invalidateQueries({ queryKey: ['funds'] })
+      qc.invalidateQueries({ queryKey: ['payments'] })
+      qc.invalidateQueries({ queryKey: ['guarantor', 'payments'] })
+    },
+  })
+}
+
+export function useCapitalTransactions(
+  fundId: string | null,
+  page = 1,
+  pageSize = 10,
+) {
+  return useQuery({
+    queryKey: ['guarantor', 'funds', fundId, 'capital', 'payments', page, pageSize],
+    queryFn: () =>
+      api.get<CapitalTransactionPage>(
+        `/guarantor/funds/${fundId}/capital/payments?page=${page}&pageSize=${pageSize}`,
+      ),
+    enabled: !!fundId,
   })
 }

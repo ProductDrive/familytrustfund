@@ -25,4 +25,7 @@ public enum LoanStatus
 
     /// <summary>Loan has defaulted on repayments.</summary>
     Defaulted = 7,
+
+    /// <summary>Loan request was cancelled before disbursement (by the member while pending, or by the Guarantor while pending/approved).</summary>
+    Cancelled = 8,
 }
