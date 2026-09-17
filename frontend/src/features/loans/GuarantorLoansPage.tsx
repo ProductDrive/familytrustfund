@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Check, X, BadgeCheck } from 'lucide-react'
 import {
   useGuarantorPendingLoans,
@@ -21,6 +22,7 @@ const FREQUENCIES = ['Weekly', 'Biweekly', 'Monthly'] as const
 function ApproveForm({ loan, onDone }: { loan: Loan; onDone: () => void }) {
   const approve = useApproveLoan()
   const reject = useRejectLoan()
+  const navigate = useNavigate()
   const [amount, setAmount] = useState(String(loan.requestedAmount))
   const [frequency, setFrequency] = useState<RepaymentFrequency>(
     loan.requestedFrequency,
@@ -35,7 +37,14 @@ function ApproveForm({ loan, onDone }: { loan: Loan; onDone: () => void }) {
       if (!parsed || parsed <= 0) return
       approve.mutate(
         { loanId: loan.id, approvedAmount: parsed, approvedFrequency: frequency },
-        { onSuccess: onDone },
+        {
+          onSuccess: () => {
+            onDone()
+            // Send the Guarantor straight to the disbursement page for this
+            // loan so the payout can be initiated immediately.
+            navigate(`/guarantor/disburse?fund=${loan.fundId}&loan=${loan.id}`)
+          },
+        },
       )
     } else {
       reject.mutate({ loanId: loan.id, reason: rejectReason.trim() || null }, { onSuccess: onDone })

@@ -1,8 +1,23 @@
 import { useState } from 'react'
-import { HandCoins, KeyRound, Wallet, BadgeCheck, PiggyBank } from 'lucide-react'
+import {
+  BadgeCheck,
+  HandCoins,
+  KeyRound,
+  PiggyBank,
+  Wallet,
+} from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useJoinFund, useMyMemberships, type Membership } from './membershipApi'
-import { useLendingCapacity } from '../loans/loanApi'
+import {
+  useLendingCapacity,
+  useMyLoans,
+  type Loan,
+} from '../loans/loanApi'
+import {
+  useMyContributions,
+  useMyFundCredit,
+} from '../contributions/contributionApi'
+import { useRepaymentSummary, useScheduleItems } from '../repayments/repaymentApi'
 import { PageHeader } from '../../components/ui/PageHeader'
 import { Card } from '../../components/ui/Card'
 import { Badge, StatusBadge } from '../../components/ui/Badge'
@@ -10,6 +25,7 @@ import { KpiCard } from '../../components/ui/KpiCard'
 import { Button } from '../../components/ui/Button'
 import { EmptyState, SkeletonCard } from '../../components/ui/State'
 import { MoneyDisplay } from '../../lib/money'
+import { formatShortDate } from '../../lib/formatDate'
 
 const JoinFundForm = () => {
   const joinFund = useJoinFund()
@@ -73,10 +89,6 @@ function FundCard({ membership }: { membership: Membership }) {
           <span className="property-label">Join code</span>
           <code>{membership.joinCode}</code>
         </li>
-        <li>
-          <span className="property-label">Fund status</span>
-          <span className="property-value">{membership.fundStatus}</span>
-        </li>
         {membership.fundType === 'Family' && (
           <>
             <li>
@@ -117,14 +129,75 @@ function FundCard({ membership }: { membership: Membership }) {
   )
 }
 
+function ActiveLoanCard({ loan }: { loan: Loan }) {
+  const navigate = useNavigate()
+  const { data: summary } = useRepaymentSummary(loan.id)
+  const { data: items = [] } = useScheduleItems(loan.id)
+
+  const next = items.find((i) => i.status !== 'Paid')
+
+  return (
+    <Card>
+      <div className="card-title">
+        <h3>Active loan</h3>
+        <StatusBadge status={loan.status} withDot />
+      </div>
+      <p className="muted">{loan.fundName}</p>
+
+      <ul className="property-list" style={{ marginTop: 8 }}>
+        <li>
+          <span className="property-label">Outstanding balance</span>
+          <MoneyDisplay amount={summary?.outstandingBalance ?? 0} />
+        </li>
+        {summary?.outstandingInterest != null && summary.outstandingInterest > 0 && (
+          <li>
+            <span className="property-label">Remaining interest</span>
+            <MoneyDisplay amount={summary.outstandingInterest} />
+          </li>
+        )}
+        <li>
+          <span className="property-label">Settlement quote</span>
+          <MoneyDisplay amount={summary?.settlementQuote ?? 0} />
+        </li>
+        {next && (
+          <li>
+            <span className="property-label">Next repayments</span>
+            <span className="property-value">
+              <MoneyDisplay amount={next.expectedAmount - next.paidAmount} /> due{' '}
+              {formatShortDate(next.dueDateUtc)}
+              {next.status === 'Overdue' ? ' (overdue)' : ''}
+            </span>
+          </li>
+        )}
+      </ul>
+
+      <div style={{ marginTop: 16, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <Button onClick={() => navigate('/repayments')}>
+          <HandCoins size={16} /> View repayments
+        </Button>
+      </div>
+    </Card>
+  )
+}
+
 export function MembershipDashboard() {
   const navigate = useNavigate()
   const { data: memberships, isLoading, error } = useMyMemberships()
+  const { data: credit = [], isLoading: loadingCredit } = useMyFundCredit()
+  const { data: myLoans = [], isLoading: loadingLoans } = useMyLoans()
+  const { data: contributions = [] } = useMyContributions()
   const [showAllFunds, setShowAllFunds] = useState(false)
 
   const activeCount = memberships?.filter((m) => m.status === 'Active').length ?? 0
   const pausedCount = (memberships?.length ?? 0) - activeCount
   const activeMemberships = memberships?.filter((m) => m.status === 'Active') ?? []
+
+  const totalFundCredit = credit.reduce((s, c) => s + c.fundCredit, 0)
+  const activeLoan = myLoans.find((l) => l.status === 'Disbursed')
+  const totalOutstanding = myLoans
+    .filter((l) => l.status === 'Disbursed')
+    .reduce((s, l) => s + (l.outstandingBalance ?? 0), 0)
+  const recentContributions = contributions.slice(0, 5)
 
   return (
     <div>
@@ -142,6 +215,7 @@ export function MembershipDashboard() {
 
       {isLoading && (
         <div className="kpi-grid">
+          <SkeletonCard />
           <SkeletonCard />
           <SkeletonCard />
           <SkeletonCard />
@@ -163,11 +237,41 @@ export function MembershipDashboard() {
             icon={<BadgeCheck size={20} />}
             tone="success"
           />
+          <KpiCard
+            label="Total Fund Credit"
+            value={
+              loadingCredit ? (
+                '…'
+              ) : (
+                <MoneyDisplay amount={totalFundCredit} />
+              )
+            }
+            hint="Your continuing stake in your funds"
+            icon={<PiggyBank size={20} />}
+            tone="info"
+          />
+          <KpiCard
+            label="Active loan outstanding"
+            value={
+              loadingLoans ? (
+                '…'
+              ) : activeLoan ? (
+                <MoneyDisplay amount={totalOutstanding} />
+              ) : (
+                '—'
+              )
+            }
+            hint={activeLoan ? 'Total still owed on disbursed loans' : 'No active loan'}
+            icon={<HandCoins size={20} />}
+            tone={activeLoan ? 'warning' : 'neutral'}
+          />
         </div>
       )}
 
+      {activeLoan && <div style={{ marginTop: 24 }}><ActiveLoanCard loan={activeLoan} /></div>}
+
       {activeMemberships.length > 0 && (
-        <div className="grid grid--funds">
+        <div className="grid grid--funds" style={{ marginTop: 24 }}>
           {activeMemberships.map((m) => (
             <FundCard key={m.fundId} membership={m} />
           ))}
@@ -192,6 +296,32 @@ export function MembershipDashboard() {
         </Card>
       )}
 
+      {recentContributions.length > 0 && (
+        <div style={{ marginTop: 24 }}>
+          <Card title="Recent contributions">
+            <ul className="activity-list">
+              {recentContributions.map((c) => (
+                <li key={c.id}>
+                  <span className="activity-icon">
+                    <PiggyBank size={16} />
+                  </span>
+                  <span className="activity-body">
+                    <strong>{c.fundName}</strong>
+                    <span className="activity-meta">
+                      {formatShortDate(c.confirmedAtUtc ?? c.reportedAtUtc)}
+                    </span>
+                  </span>
+                  <span className="activity-meta">
+                    <MoneyDisplay amount={c.amount} />
+                  </span>
+                  <StatusBadge status={c.status} withDot />
+                </li>
+              ))}
+            </ul>
+          </Card>
+        </div>
+      )}
+
       {memberships && memberships.length === 0 && !isLoading && (
         <Card>
           <EmptyState
@@ -204,7 +334,7 @@ export function MembershipDashboard() {
       )}
 
       {memberships && memberships.length > 0 && (
-        <div id="join-fund" style={{ marginTop: 16 }}>
+        <div id="join-fund" style={{ marginTop: 24 }}>
           <JoinFundForm />
         </div>
       )}

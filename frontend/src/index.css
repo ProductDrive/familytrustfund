@@ -773,6 +773,16 @@ code {
   background: var(--muted-bg);
 }
 
+.data-table tbody tr.row--highlight {
+  background: color-mix(in srgb, var(--primary) 8%, transparent);
+  outline: 1px solid var(--primary);
+  outline-offset: -1px;
+}
+
+.data-table tbody tr.row--highlight:hover {
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+}
+
 .data-table tbody tr:last-child td {
   border-bottom: none;
 }
@@ -811,6 +821,57 @@ code {
 
 .property-list li:last-child {
   border-bottom: none;
+}
+
+.section-heading {
+  font-size: 20px;
+  line-height: 28px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 32px 0 16px;
+}
+
+.activity-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.activity-list li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.activity-list li:last-child {
+  border-bottom: none;
+}
+
+.activity-list .activity-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.activity-list .activity-meta {
+  color: var(--text-secondary);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.activity-list .activity-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm, 8px);
+  background: var(--muted-bg);
+  color: var(--text-secondary);
+  flex-shrink: 0;
 }
 
 .property-label {

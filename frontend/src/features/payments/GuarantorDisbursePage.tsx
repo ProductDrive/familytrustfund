@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { CSSProperties } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { ExternalLink, HandCoins, RefreshCw, Send, ShieldCheck, X } from 'lucide-react'
 import { useFunds } from '../funds/fundApi'
 import { useFundLoans, useGuarantorCancelLoan } from '../loans/loanApi'
@@ -243,10 +244,12 @@ function DisbursementReturnBanner({
 
 export function GuarantorDisbursePage() {
   const { data: funds, isLoading: loadingFunds } = useFunds()
-  const [fundId, setFundId] = useState('')
-  const selectedFundId = fundId || funds?.[0]?.id
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [fundId, setFundId] = useState(() => searchParams.get('fund') ?? '')
+  const selectedFundId = fundId || (funds && funds.length > 0 ? funds[0].id : '')
   const { data: loans, isLoading: loadingLoans } = useFundLoans(selectedFundId ?? null)
   const [returnBanner, setReturnBanner] = useState<{ fundId: string; reference: string } | null>(null)
+  const highlightLoanId = searchParams.get('loan')
 
   useEffect(() => {
     const pendingRaw = sessionStorage.getItem(PENDING_KEY)
@@ -268,6 +271,18 @@ export function GuarantorDisbursePage() {
     // oxlint-disable-next-line react/set-state-in-effect
     setReturnBanner({ fundId: pending.fundId, reference })
   }, [])
+
+  // When arriving straight from approval (?fund=&loan=), focus the just-approved
+  // loan so the Guarantor can start the payout immediately.
+  useEffect(() => {
+    if (!highlightLoanId || !loans || loans.length === 0) return
+    const id = `loan-row-${highlightLoanId}`
+    if (!loans.some((l) => l.id === highlightLoanId)) return
+    const el = document.getElementById(id)
+    if (!el) return
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    setSearchParams({}, { replace: true })
+  }, [highlightLoanId, loans, setSearchParams])
 
   return (
     <div>
@@ -317,7 +332,11 @@ export function GuarantorDisbursePage() {
                 </thead>
                 <tbody>
                   {loans.map((l) => (
-                    <tr key={l.id}>
+                    <tr
+                      key={l.id}
+                      id={`loan-row-${l.id}`}
+                      className={l.id === highlightLoanId ? 'row--highlight' : undefined}
+                    >
                       <td>
                         <strong>{l.memberDisplayName || 'Member'}</strong>
                       </td>

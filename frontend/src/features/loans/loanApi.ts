@@ -165,3 +165,12 @@ export function useGuarantorCancelLoan() {
     },
   })
 }
+
+export function useGuarantorLendingCapacity(fundId: string | null) {
+  return useQuery({
+    queryKey: ['guarantor', 'loans', 'lending-capacity', fundId],
+    queryFn: () =>
+      api.get<LendingCapacity>(`/guarantor/loans/lending-capacity/${fundId}`),
+    enabled: !!fundId,
+  })
+}
