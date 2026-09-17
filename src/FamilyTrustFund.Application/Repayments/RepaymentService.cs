@@ -149,15 +149,21 @@ public class RepaymentService
             .Where(i => i.Status != ScheduleItemStatus.Paid && i.DueDateUtc.Date < today)
             .ToList() ?? new List<LoanScheduleItem>();
 
+        // The amount still owed includes unpaid interest, not just principal
+        // (AGENTS §2.6, §18). For Family loans interest is zero so this equals
+        // the outstanding principal.
+        var outstanding = schedule?.RemainingObligation() ?? loan.OutstandingBalance;
+
         return new RepaymentSummaryDto
         {
-            OutstandingBalance = loan.OutstandingBalance,
+            OutstandingBalance = outstanding,
+            OutstandingInterest = schedule?.RemainingInterest() ?? 0m,
             TotalExpected = schedule?.Items.Sum(i => i.ExpectedAmount) ?? 0m,
             TotalPaid = repayments.Sum(r => r.ActualAmount),
             TotalSurplus = repayments.Sum(r => r.Surplus),
             OverdueItems = overdueItems.Count,
             OverdueAmount = overdueItems.Sum(i => i.ExpectedAmount - i.PaidAmount),
-            SettlementQuote = loan.OutstandingBalance,
+            SettlementQuote = outstanding,
         };
     }
 
@@ -235,12 +241,18 @@ public class RepaymentService
         }
 
         var schedule = await _repaymentRepository.GetCurrentScheduleAsync(request.LoanId, ct);
-        var quote = loan.OutstandingBalance;
+        // A settlement quote is the full remaining obligation — outstanding
+        // principal plus any unpaid interest (ADR: server-calculated quote,
+        // not the original schedule and not principal alone).
+        var quote = schedule?.RemainingObligation() ?? loan.OutstandingBalance;
 
         if (request.Amount < quote)
         {
+            var detail = loan.InterestRate > 0m
+                ? $"Outstanding principal: ₦{loan.OutstandingBalance:N2}, remaining interest: ₦{(quote - Math.Min(quote, loan.OutstandingBalance)):N2}."
+                : $"Outstanding: ₦{quote:N2}.";
             throw new InvalidRepaymentException(
-                $"Settlement amount is less than the outstanding balance. Outstanding: ₦{quote:N2}.");
+                $"Settlement amount is less than the outstanding balance. {detail}");
         }
 
         var repayment = new Repayment(
@@ -254,7 +266,10 @@ public class RepaymentService
 
         schedule?.Close();
 
-        loan.ReduceOutstandingBalance(quote);
+        if (loan.OutstandingBalance > 0)
+        {
+            loan.ReduceOutstandingBalance(Math.Min(quote, loan.OutstandingBalance));
+        }
 
         await _repaymentRepository.AddAsync(repayment, ct);
         await _auditLog.RecordAsync(memberId, "Repayment.Settled", "Loan", loan.Id,
@@ -284,9 +299,17 @@ public class RepaymentService
         var apply = Math.Min(amount, needed);
         next.MarkPaid(apply, paidAt);
 
-        // Guard against over-reducing: never reduce outstanding below zero.
-        var reduceBy = Math.Min(amount, loan.OutstandingBalance);
-        loan.ReduceOutstandingBalance(reduceBy);
+        // Interest is not principal: only the principal portion of what is
+        // paid (plus any surplus beyond the instalment) reduces the loan's
+        // outstanding principal, capped at the balance. The item-level
+        // principal ratio stays stable across partial and full payments.
+        var principalShare = next.ExpectedAmount > 0m ? next.PrincipalDue / next.ExpectedAmount : 0m;
+        var principalCovered = Math.Round(apply * principalShare, 2, MidpointRounding.AwayFromZero);
+        var reduceBy = Math.Min(principalCovered + (amount - apply), loan.OutstandingBalance);
+        if (reduceBy > 0m)
+        {
+            loan.ReduceOutstandingBalance(reduceBy);
+        }
 
         var repayment = new Repayment(
             loan.Id,
@@ -301,7 +324,9 @@ public class RepaymentService
         await _auditLog.RecordAsync(loan.MemberId, "Repayment.Scheduled", "Loan", loan.Id,
             $"Expected={needed:N2}, Actual={amount:N2}, Surplus={(amount - needed):N2}", ct);
 
-        if (loan.OutstandingBalance <= 0)
+        // A loan is fully repaid only when nothing remains on the schedule
+        // (principal AND interest), not merely when the principal hits zero.
+        if (schedule.RemainingObligation() <= 0m)
         {
             loan.MarkCompleted();
             schedule.Close();
@@ -316,40 +341,74 @@ public class RepaymentService
         string? note,
         CancellationToken ct)
     {
-        var reduceBy = Math.Min(amount, loan.OutstandingBalance);
-        loan.ReduceOutstandingBalance(reduceBy);
-
-        var repayment = new Repayment(
-            loan.Id,
-            schedule.Version,
-            RepaymentKind.LumpSum,
-            0m,
-            amount,
-            paidAt,
-            note);
-        await _repaymentRepository.AddAsync(repayment, ct);
-
-        await _auditLog.RecordAsync(loan.MemberId, "Repayment.LumpSum", "Loan", loan.Id,
-            $"PrincipalReduced={reduceBy:N2}, Actual={amount:N2}", ct);
-
-        if (loan.OutstandingBalance <= 0)
+        var remainingObligation = schedule.RemainingObligation();
+        if (remainingObligation <= 0m)
         {
+            return;
+        }
+
+        // A lump-sum that covers the full remaining obligation (principal AND
+        // unpaid interest) fully repays the loan. Otherwise it is applied to
+        // principal only; any unpaid interest remains owed and is carried into
+        // the revised schedule.
+        if (amount >= remainingObligation)
+        {
+            var repayment = new Repayment(
+                loan.Id,
+                schedule.Version,
+                RepaymentKind.LumpSum,
+                remainingObligation,
+                amount,
+                paidAt,
+                note);
+            await _repaymentRepository.AddAsync(repayment, ct);
+
+            await _auditLog.RecordAsync(loan.MemberId, "Repayment.LumpSum", "Loan", loan.Id,
+                $"FullRemaining={remainingObligation:N2}, Actual={amount:N2}, Surplus={(amount - remainingObligation):N2}", ct);
+
+            if (loan.OutstandingBalance > 0)
+            {
+                loan.ReduceOutstandingBalance(Math.Min(remainingObligation, loan.OutstandingBalance));
+            }
+
             loan.MarkCompleted();
             schedule.Close();
             return;
         }
 
-        // Recalculate the remaining schedule as a new revision, preserving the
-        // repayment frequency (ADR: default preferred behaviour).
-        var revision = LoanSchedule.CreateRevision(
-            schedule,
-            loan.OutstandingBalance,
-            loan.ApprovedFrequency!.Value,
-            paidAt);
+        var reduceBy = Math.Min(amount, loan.OutstandingBalance);
+        if (reduceBy > 0m)
+        {
+            loan.ReduceOutstandingBalance(reduceBy);
+        }
 
-        await _repaymentRepository.AddAsync(revision, ct);
-        await _auditLog.RecordAsync(loan.MemberId, "Repayment.ScheduleRevised", "LoanSchedule", revision.Id,
-            $"Version={revision.Version}, RemainingBalance={loan.OutstandingBalance:N2}", ct);
+        var lumpRepayment = new Repayment(
+            loan.Id,
+            schedule.Version,
+            RepaymentKind.LumpSum,
+            reduceBy,
+            amount,
+            paidAt,
+            note);
+        await _repaymentRepository.AddAsync(lumpRepayment, ct);
+
+        await _auditLog.RecordAsync(loan.MemberId, "Repayment.LumpSum", "Loan", loan.Id,
+            $"PrincipalReduced={reduceBy:N2}, Actual={amount:N2}, Surplus={(amount - reduceBy):N2}", ct);
+
+        // Recalculate the remaining schedule as a new revision, preserving the
+        // repayment frequency and the remaining interest (ADR-011).
+        if (schedule.Items.Any(i => i.PaidAmount == 0m))
+        {
+            var revision = LoanSchedule.CreateRevision(
+                schedule,
+                loan.OutstandingBalance,
+                loan.ApprovedFrequency!.Value,
+                paidAt);
+
+            await _repaymentRepository.AddAsync(revision, ct);
+            await _auditLog.RecordAsync(loan.MemberId, "Repayment.ScheduleRevised", "LoanSchedule", revision.Id,
+                $"Version={revision.Version}, RemainingPrincipal={loan.OutstandingBalance:N2}, RemainingInterest={revision.RemainingInterest():N2}", ct);
+        }
     }
 
     private static ScheduleItemDto ToItemDto(LoanScheduleItem item) => new()

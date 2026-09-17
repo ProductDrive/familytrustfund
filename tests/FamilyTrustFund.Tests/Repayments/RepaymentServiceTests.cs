@@ -74,10 +74,22 @@ public class RepaymentRuleTests
     public void BuildAmortisedInstalments_reduces_each_instalment()
     {
         var items = RepaymentRules.BuildAmortisedInstalments(
-            Guid.NewGuid(), 40_000m, 2, RepaymentFrequency.Monthly, new DateTime(2026, 1, 1));
+            Guid.NewGuid(), 40_000m, 0m, 2, RepaymentFrequency.Monthly, new DateTime(2026, 1, 1));
 
         items.Count.Should().Be(2);
         items.Sum(i => i.PrincipalDue).Should().Be(40_000m);
+    }
+
+    [Fact]
+    public void BuildAmortisedInstalments_keeps_remaining_interest()
+    {
+        var items = RepaymentRules.BuildAmortisedInstalments(
+            Guid.NewGuid(), 35_000m, 7_500m, 3, RepaymentFrequency.Monthly, new DateTime(2026, 1, 1));
+
+        items.Count.Should().Be(3);
+        items.Sum(i => i.PrincipalDue).Should().Be(35_000m);
+        items.Sum(i => i.InterestDue).Should().Be(7_500m);
+        items.Sum(i => i.ExpectedAmount).Should().Be(42_500m);
     }
 }
 
@@ -186,13 +198,16 @@ public class RepaymentServiceTests
         var loan = MakeDisbursedLoan();
         var (service, _) = CreateService(loan);
         await service.EnsureScheduleAsync(MemberId, loan.Id);
-        var first = loan.ApprovedAmount!.Value / 4m + 10m; // 27,500 monthly instalment
+        var instalment = loan.TotalRepayable / 4m; // 27,500 = 25,000 principal + 2,500 interest
 
         var summary = await service.MakePaymentAsync(
-            MemberId, new MakeRepaymentRequest { LoanId = loan.Id, Amount = first }, RepaymentKind.Scheduled);
+            MemberId, new MakeRepaymentRequest { LoanId = loan.Id, Amount = instalment }, RepaymentKind.Scheduled);
 
-        summary.OutstandingBalance.Should().Be(loan.ApprovedAmount!.Value - first);
-        loan.OutstandingBalance.Should().Be(loan.ApprovedAmount!.Value - first);
+        // Remaining obligation still includes the interest on the 3 future instalments.
+        summary.OutstandingBalance.Should().Be(82_500m);
+        summary.OutstandingInterest.Should().Be(7_500m);
+        // Outstanding principal only reduces by this instalment's principal share.
+        loan.OutstandingBalance.Should().Be(75_000m);
     }
 
     [Fact]
@@ -212,19 +227,71 @@ public class RepaymentServiceTests
     }
 
     [Fact]
-    public async Task Lump_sum_reduces_principal_and_creates_schedule_revision()
+    public async Task Lump_sum_reduces_principal_and_keeps_remaining_interest()
     {
-        var loan = MakeDisbursedLoan();
+        var loan = MakeDisbursedLoan(); // 100k principal, 110k total, 4 instalments
         var (service, repo) = CreateService(loan);
         await service.EnsureScheduleAsync(MemberId, loan.Id);
 
         await service.MakePaymentAsync(
             MemberId, new MakeRepaymentRequest { LoanId = loan.Id, Amount = 40_000m }, RepaymentKind.LumpSum);
 
+        // Lump-sum reduces principal only; the 10,000 total interest is
+        // spread into the revised schedule, not discarded.
         loan.OutstandingBalance.Should().Be(60_000m);
+        loan.Status.Should().Be(LoanStatus.Disbursed); // NOT completed — interest remains
         repo.Schedules.Count.Should().Be(2);
-        repo.Schedules.Max(s => s.Version).Should().Be(2);
+        var revision = repo.Schedules.Single(s => s.Version == 2);
+        revision.RemainingObligation().Should().Be(70_000m); // 60k principal + 10k interest
+        revision.RemainingInterest().Should().Be(10_000m);
         repo.Repayments.Should().ContainSingle(r => r.Kind == RepaymentKind.LumpSum);
+    }
+
+    [Fact]
+    public async Task Lump_sum_paying_full_principal_but_not_interest_does_not_complete()
+    {
+        var loan = MakeDisbursedLoan(); // 100k principal, 110k total, 4 instalments
+        var (service, repo) = CreateService(loan);
+        await service.EnsureScheduleAsync(MemberId, loan.Id);
+
+        await service.MakePaymentAsync(
+            MemberId, new MakeRepaymentRequest { LoanId = loan.Id, Amount = 100_000m }, RepaymentKind.LumpSum);
+
+        loan.OutstandingBalance.Should().Be(0m);
+        loan.Status.Should().Be(LoanStatus.Disbursed);
+        var revision = repo.Schedules.Single(s => s.Version == 2);
+        revision.RemainingInterest().Should().Be(10_000m);
+        revision.RemainingObligation().Should().Be(10_000m);
+    }
+
+    [Fact]
+    public async Task Lump_sum_covering_full_obligation_completes_loan()
+    {
+        var loan = MakeDisbursedLoan(); // 100k principal, 110k total
+        var (service, repo) = CreateService(loan);
+        await service.EnsureScheduleAsync(MemberId, loan.Id);
+
+        await service.MakePaymentAsync(
+            MemberId, new MakeRepaymentRequest { LoanId = loan.Id, Amount = 110_000m }, RepaymentKind.LumpSum);
+
+        loan.OutstandingBalance.Should().Be(0m);
+        loan.Status.Should().Be(LoanStatus.Completed);
+        repo.Repayments.Should().ContainSingle(r =>
+            r.Kind == RepaymentKind.LumpSum && r.ExpectedAmount == 110_000m && r.Surplus == 0m);
+    }
+
+    [Fact]
+    public async Task Summary_reflects_remaining_interest_in_quote_and_outstanding()
+    {
+        var loan = MakeDisbursedLoan(); // 110k obligation, 10k interest
+        var (service, _) = CreateService(loan);
+        await service.EnsureScheduleAsync(MemberId, loan.Id);
+
+        var summary = await service.GetSummaryAsync(loan.Id);
+
+        summary.SettlementQuote.Should().Be(110_000m);
+        summary.OutstandingBalance.Should().Be(110_000m);
+        summary.OutstandingInterest.Should().Be(10_000m);
     }
 
     [Fact]
@@ -239,7 +306,8 @@ public class RepaymentServiceTests
 
         summary.OutstandingBalance.Should().Be(0m);
         loan.Status.Should().Be(LoanStatus.Completed);
-        repo.Repayments.Should().ContainSingle(r => r.Kind == RepaymentKind.FullSettlement);
+        repo.Repayments.Should().ContainSingle(r =>
+            r.Kind == RepaymentKind.FullSettlement && r.ExpectedAmount == 110_000m && r.Surplus == 0m);
     }
 
     [Fact]
@@ -286,7 +354,7 @@ public class RepaymentServiceTests
 
         summary.OverdueItems.Should().Be(4);
         summary.OverdueAmount.Should().Be(loan.TotalRepayable);
-        summary.SettlementQuote.Should().Be(loan.OutstandingBalance);
+        summary.SettlementQuote.Should().Be(loan.TotalRepayable);
     }
 
     [Fact]

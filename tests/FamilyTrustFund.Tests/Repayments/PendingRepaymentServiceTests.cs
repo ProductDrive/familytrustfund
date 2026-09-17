@@ -148,7 +148,9 @@ public class PendingRepaymentServiceTests
         result.RepaymentPosted.Should().BeTrue();
         result.Pending.Status.Should().Be(PendingRepaymentStatus.Confirmed);
         h.RepayRepo.Repayments.Should().ContainSingle(r => r.LoanId == h.Loan.Id);
-        h.Loan.OutstandingBalance.Should().Be(100_000m - 27_500m);
+        // Instalment interest (2,500) is not principal; only the principal
+        // share (25,000) reduces the outstanding balance.
+        h.Loan.OutstandingBalance.Should().Be(75_000m);
     }
 
     [Fact]

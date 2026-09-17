@@ -72,13 +72,16 @@ public static class RepaymentRules
     }
 
     /// <summary>
-    /// Spreads the remaining outstanding capital across the remaining
-    /// instalments. Used when a confirmed lump-sum recalculates the remaining
-    /// schedule; interest on already-allocated items is preserved separately.
+    /// Spreads the remaining outstanding capital AND the remaining interest
+    /// across the remaining instalments. Used when a confirmed lump-sum
+    /// recalculates the remaining schedule. A lump-sum reduces principal only —
+    /// the remaining interest stays owed (flat-rate external loans), so it is
+    /// carried into the revised instalments instead of being discarded.
     /// </summary>
     public static IReadOnlyList<Instalment> BuildAmortisedInstalments(
         Guid scheduleId,
         decimal remainingPrincipal,
+        decimal remainingInterest,
         int remainingTerm,
         RepaymentFrequency frequency,
         DateTime startDateUtc)
@@ -88,28 +91,43 @@ public static class RepaymentRules
             throw new InvalidRepaymentException("Remaining principal cannot be negative.");
         }
 
+        if (remainingInterest < 0)
+        {
+            throw new InvalidRepaymentException("Remaining interest cannot be negative.");
+        }
+
         if (remainingTerm <= 0)
         {
             throw new InvalidRepaymentException("Remaining term must be positive.");
         }
 
         var principalPerItem = Math.Round(remainingPrincipal / remainingTerm, 2, MidpointRounding.AwayFromZero);
+        var interestPerItem = Math.Round(remainingInterest / remainingTerm, 2, MidpointRounding.AwayFromZero);
         var result = new List<Instalment>(remainingTerm);
         var principalTotal = 0m;
+        var interestTotal = 0m;
 
         for (var i = 0; i < remainingTerm; i++)
         {
             var isLast = i == remainingTerm - 1;
+
+            // The last instalment absorbs rounding so the revised schedule
+            // matches the remaining principal and remaining interest exactly.
             var principal = isLast ? remainingPrincipal - principalTotal : principalPerItem;
+            var interest = isLast ? remainingInterest - interestTotal : interestPerItem;
             principalTotal += principal;
+            interestTotal += interest;
+
+            var roundedPrincipal = Math.Round(principal, 2, MidpointRounding.AwayFromZero);
+            var roundedInterest = Math.Round(interest, 2, MidpointRounding.AwayFromZero);
 
             result.Add(new Instalment
             {
                 Sequence = i + 1,
                 DueDateUtc = AddFrequency(startDateUtc, frequency, i + 1),
-                PrincipalDue = Math.Round(principal, 2, MidpointRounding.AwayFromZero),
-                InterestDue = 0m,
-                ExpectedAmount = Math.Round(principal, 2, MidpointRounding.AwayFromZero),
+                PrincipalDue = roundedPrincipal,
+                InterestDue = roundedInterest,
+                ExpectedAmount = roundedPrincipal + roundedInterest,
             });
         }
 

@@ -100,8 +100,13 @@ export function MemberRepaymentPage() {
             {summary && (
               <div className="kpi-grid">
                 <KpiCard
-                  label="Outstanding Balance"
+                  label="Total Outstanding"
                   value={<MoneyDisplay amount={summary.outstandingBalance} />}
+                  hint={
+                    summary.outstandingInterest > 0
+                      ? `Includes ${summary.outstandingInterest.toLocaleString()} interest`
+                      : 'Principal only'
+                  }
                   icon={<Wallet size={18} />}
                   tone="info"
                 />
@@ -216,7 +221,7 @@ export function MemberRepaymentPage() {
                       />
                       {kind === 'FullSettlement' && summary ? (
                         <p className="field-hint">
-                          Current settlement quote:{' '}
+                          Current settlement quote (includes any remaining interest):{' '}
                           <MoneyDisplay amount={summary.settlementQuote} />
                         </p>
                       ) : null}

@@ -28,6 +28,7 @@ export interface Schedule {
 
 export interface RepaymentSummary {
   outstandingBalance: number
+  outstandingInterest: number
   totalExpected: number
   totalPaid: number
   totalSurplus: number

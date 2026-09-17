@@ -70,14 +70,23 @@ public sealed class PagedRepaymentsResult
 /// <summary>Server-calculated summary of a loan's repayment position.</summary>
 public sealed class RepaymentSummaryDto
 {
+    /// <summary>
+    /// Total amount still owed: outstanding principal + unpaid interest
+    /// (a Family loan has no interest, so this equals its principal).
+    /// </summary>
     public decimal OutstandingBalance { get; init; }
+
+    /// <summary>Unpaid interest remaining on the loan (0 for Family loans).</summary>
+    public decimal OutstandingInterest { get; init; }
+
     public decimal TotalExpected { get; init; }
     public decimal TotalPaid { get; init; }
     public decimal TotalSurplus { get; init; }
     public int OverdueItems { get; init; }
     public decimal OverdueAmount { get; init; }
 
-    /// <summary>Server-calculated amount required to settle the loan now.</summary>
+    /// <summary>Server-calculated amount required to settle the loan now
+    /// (the outstanding obligation, principal + interest).</summary>
     public decimal SettlementQuote { get; init; }
 }
 

@@ -71,9 +71,11 @@ public class LoanSchedule
     }
 
     /// <summary>
-    /// Creates the next revision after a confirmed lump-sum: paid items are
-    /// carried forward unchanged, unpaid instalments are amortised across the
-    /// remaining outstanding principal while preserving the repayment frequency.
+    /// Creates the next revision after a confirmed lump-sum: items with paid
+    /// amounts are carried forward unchanged, fully-unpaid instalments are
+    /// amortised across the remaining outstanding principal AND the remaining
+    /// interest while preserving the repayment frequency. Interest is never
+    /// discarded by a lump-sum (flat-rate external loans).
     /// </summary>
     public static LoanSchedule CreateRevision(
         LoanSchedule current,
@@ -89,11 +91,11 @@ public class LoanSchedule
             CreatedAtUtc = DateTime.UtcNow,
         };
 
-        var paidItems = current.Items.Where(i => i.IsPaid).ToList();
+        var paidItems = current.Items.Where(i => i.PaidAmount > 0m).ToList();
         schedule._items.AddRange(paidItems);
 
-        var unpaidItems = current.Items.Where(i => !i.IsPaid).ToList();
-        if (unpaidItems.Count == 0 || remainingOutstanding <= 0)
+        var unpaidItems = current.Items.Where(i => i.PaidAmount == 0m).ToList();
+        if (unpaidItems.Count == 0 || (remainingOutstanding <= 0 && unpaidItems.Sum(i => i.InterestDue) <= 0))
         {
             return schedule;
         }
@@ -101,6 +103,7 @@ public class LoanSchedule
         var instalments = RepaymentRules.BuildAmortisedInstalments(
             schedule.Id,
             remainingOutstanding,
+            unpaidItems.Sum(i => i.InterestDue),
             unpaidItems.Count,
             frequency,
             startDateUtc ?? DateTime.UtcNow);
@@ -115,6 +118,22 @@ public class LoanSchedule
                 i.InterestDue)));
 
         return schedule;
+    }
+
+    /// <summary>
+    /// The total amount still owed on this schedule: the sum of every
+    /// instalment's unpaid expected amount (principal + interest,
+    /// AGENTS §2.6). A loan is fully repaid only when this reaches zero.
+    /// </summary>
+    public decimal RemainingObligation()
+    {
+        return Items.Where(i => !i.IsPaid).Sum(i => i.ExpectedAmount - i.PaidAmount);
+    }
+
+    /// <summary>Remaining unpaid interest on this schedule.</summary>
+    public decimal RemainingInterest()
+    {
+        return Items.Where(i => !i.IsPaid).Sum(i => i.InterestDue);
     }
 
     /// <summary>

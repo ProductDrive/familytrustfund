@@ -95,21 +95,53 @@ public sealed class RepaymentRepository : IRepaymentRepository
             await _db.SaveChangesAsync(ct);
             return schedule;
         }
+        catch (DbUpdateException ex) when (IsUniqueScheduleConflict(ex))
+        {
+            return await DetachAndReturnExistingAsync(schedule, ct);
+        }
         catch (PostgresException ex)
             when (ex.SqlState == PostgresErrorCodes.UniqueViolation
                   && ex.ConstraintName == "IX_loan_schedules_LoanId_Version")
         {
-            // Detach the conflicting revision (and its items) without clearing
-            // the tracker, so other pending changes in this unit of work (e.g.
-            // the disbursement/loan status) are preserved.
-            _db.Entry(schedule).State = EntityState.Detached;
-            foreach (var item in schedule.Items)
-            {
-                _db.Entry(item).State = EntityState.Detached;
-            }
-
-            return await GetCurrentScheduleAsync(schedule.LoanId, ct);
+            return await DetachAndReturnExistingAsync(schedule, ct);
         }
+    }
+
+    /// <summary>
+    /// EF Core surfaces a constraint violation as a <see cref="DbUpdateException"/>
+    /// wrapping the underlying <see cref="PostgresException"/>, so the unique
+    /// (LoanId, Version) conflict has to be found by unwrapping the chain.
+    /// </summary>
+    private static bool IsUniqueScheduleConflict(Exception ex)
+    {
+        for (var current = ex; current is not null; current = current.InnerException)
+        {
+            if (current is PostgresException pg
+                && pg.SqlState == PostgresErrorCodes.UniqueViolation
+                && pg.ConstraintName == "IX_loan_schedules_LoanId_Version")
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Detaches the conflicting revision (and its items) without clearing the
+    /// tracker, so other pending changes in this unit of work (e.g. the
+    /// disbursement/loan status) are preserved, and returns the already-committed
+    /// schedule so the caller can treat the operation as a no-op.
+    /// </summary>
+    private async Task<LoanSchedule?> DetachAndReturnExistingAsync(LoanSchedule schedule, CancellationToken ct)
+    {
+        _db.Entry(schedule).State = EntityState.Detached;
+        foreach (var item in schedule.Items)
+        {
+            _db.Entry(item).State = EntityState.Detached;
+        }
+
+        return await GetCurrentScheduleAsync(schedule.LoanId, ct);
     }
 
     public async Task AddAsync(Repayment repayment, CancellationToken ct = default)
