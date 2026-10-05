@@ -25,6 +25,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+      attestations: write
+      id-token: write
 
     strategy:
       fail-fast: false
@@ -104,3 +106,10 @@ jobs:
             echo "|-----|--------|"
             echo "| \`${{ steps.tag.outputs.tag }}\` | \`${{ steps.push.outputs.digest }}\` |"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Generate Artifact Attestation
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.image }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
