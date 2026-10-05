@@ -34,7 +34,7 @@ jobs:
       matrix:
         include:
 
-          - image: api
+          - image: ftfapi
             dockerfile: Dockerfile
 
     steps:
