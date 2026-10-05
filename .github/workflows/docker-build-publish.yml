@@ -34,6 +34,7 @@ jobs:
       matrix:
         include:
 
+          # Image name becomes the GHCR path: ghcr.io/<owner>/<repo>/ftfapi
           - image: ftfapi
             dockerfile: Dockerfile
 
