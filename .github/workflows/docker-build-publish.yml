@@ -25,8 +25,6 @@ jobs:
     permissions:
       contents: read
       packages: write
-      attestations: write
-      id-token: write
 
     strategy:
       fail-fast: false
@@ -97,9 +95,12 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Generate Artifact Attestation
-        uses: actions/attest-build-provenance@v2
-        with:
-          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.image }}
-          subject-digest: ${{ steps.push.outputs.digest }}
-          push-to-registry: true
+      - name: Summarise Published Image
+        run: |
+          {
+            echo "### Published \`${{ matrix.image }}\` image"
+            echo ""
+            echo "| Tag | Digest |"
+            echo "|-----|--------|"
+            echo "| \`${{ steps.tag.outputs.tag }}\` | \`${{ steps.push.outputs.digest }}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
