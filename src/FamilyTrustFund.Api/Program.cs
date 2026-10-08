@@ -18,6 +18,7 @@ using FamilyTrustFund.Infrastructure.Identity;
 using FamilyTrustFund.Infrastructure.Payments;
 using FamilyTrustFund.Infrastructure.Storage;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.OpenApi;
 using Microsoft.EntityFrameworkCore;
@@ -118,6 +119,14 @@ builder.Services.ConfigureApplicationCookie(options =>
 // ---- Google OIDC (production path; skipped when no client id configured) ----
 var googleClientId = builder.Configuration["Authentication:Google:ClientId"];
 var googleClientSecret = builder.Configuration["Authentication:Google:ClientSecret"];
+// Public base URL of the deployed frontend. Set this when the SPA is served
+// from a different origin than the API (e.g. Vercel) and reaches the API
+// through a same-origin rewrite. The auth cookie is host-scoped, so the OIDC
+// redirect_uri must point at the frontend origin; otherwise Google sends the
+// browser straight to the API host and the session cookie is never sent back
+// to the frontend. Leave empty to derive the redirect from the request (local
+// development). This must also be registered in the Google OAuth client.
+var googlePublicBaseUrl = builder.Configuration["Authentication:Google:PublicBaseUrl"];
 var hasGoogleConfig = !string.IsNullOrWhiteSpace(googleClientId) && !string.IsNullOrWhiteSpace(googleClientSecret);
 if (hasGoogleConfig)
 {
@@ -136,6 +145,19 @@ if (hasGoogleConfig)
             options.SaveTokens = true;
             options.GetClaimsFromUserInfoEndpoint = true;
             options.MapInboundClaims = false;
+            options.Events = new OpenIdConnectEvents
+            {
+                OnRedirectToIdentityProvider = context =>
+                {
+                    if (!string.IsNullOrWhiteSpace(googlePublicBaseUrl))
+                    {
+                        context.ProtocolMessage.RedirectUri =
+                            googlePublicBaseUrl.TrimEnd('/') + options.CallbackPath;
+                    }
+
+                    return Task.CompletedTask;
+                },
+            };
         });
 }
 
