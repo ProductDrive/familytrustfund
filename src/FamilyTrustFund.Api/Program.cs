@@ -235,11 +235,18 @@ if (app.Environment.IsDevelopment())
 
 app.MapGet("/api/health", () => Results.Ok(new { status = "ok" }));
 
-app.MapGet("/", () => Results.Ok(new
+app.MapGet("/", () =>
 {
-    service = "FamilyTrustFund.Api",
-    openapi = "/openapi/v1.json",
-    swagger = "/swagger",
-}));
+    var payload = new Dictionary<string, string>
+    {
+        ["service"] = "FamilyTrustFund.Api",
+    };
+    if (enableApiDocs)
+    {
+        payload["openapi"] = "/openapi/v1.json";
+        payload["swagger"] = "/swagger";
+    }
+    return Results.Ok(payload);
+});
 
 app.Run();
