@@ -30,6 +30,10 @@ artifacts/
 # AppHost generated files
 *.{dotenv,build}
 
+# ---- Deployment (VPS stack config, transferred manually) ----
+DEPLOYMENTSTEPS.md
+deploy/docker-compose.yml
+
 # ---- Test results ----
 TestResults/
 *.trx
