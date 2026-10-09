@@ -138,6 +138,13 @@ if (hasGoogleConfig)
             options.ClientSecret = googleClientSecret;
             options.CallbackPath = "/api/auth/google/callback";
             options.ResponseType = "code";
+            // Use the query response mode instead of the ASP.NET OIDC default
+            // (form_post). The SPA reaches the API through a Vercel reverse
+            // proxy; form_post delivers code/state in the POST body, which is
+            // not reliably preserved through that proxy and yields
+            // "message.State is null or empty". Query mode keeps them in the
+            // URL, which survives the rewrite, and is safe for code+PKCE.
+            options.ResponseMode = "query";
             options.Scope.Clear();
             options.Scope.Add("openid");
             options.Scope.Add("profile");
