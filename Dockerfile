@@ -17,6 +17,14 @@ RUN dotnet publish src/FamilyTrustFund.Api/FamilyTrustFund.Api.csproj \
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
 
+# Npgsql probes for the GSSAPI/Kerberos native library at startup. The slim
+# .NET runtime image does not ship it, so PostgreSQL connections log
+# "Cannot load library libgssapi_krb5.so.2". Install it so connection setup
+# (and password authentication) initialises cleanly.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libgssapi-krb5-2 \
+    && rm -rf /var/lib/apt/lists/*
+
 # Evidence storage root (AGENTS §9 / ADR-036). Created and owned by the
 # non-root `app` user so the named volume in docker-compose works out of
 # the box.
