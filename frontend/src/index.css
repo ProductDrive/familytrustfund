@@ -1092,6 +1092,52 @@ code {
   margin-bottom: 16px;
 }
 
+.otp-terms {
+  margin: 0 0 16px;
+  padding-left: 18px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.otp-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 16px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.otp-check input {
+  margin-top: 2px;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--primary);
+}
+
+.link-button {
+  display: block;
+  margin: 12px auto 0;
+  padding: 4px 8px;
+  background: none;
+  border: none;
+  color: var(--primary);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.link-button:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+.link-button:disabled {
+  color: var(--text-secondary);
+  cursor: default;
+}
+
 /* ------------------------------------------------------------
    Modal / dialog overlay
    ------------------------------------------------------------ */

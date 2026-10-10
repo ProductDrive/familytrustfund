@@ -1,9 +1,11 @@
 using System.Security.Claims;
+using FamilyTrustFund.Application.Auth;
 using FamilyTrustFund.Domain.Auth;
 using FamilyTrustFund.Infrastructure.Identity;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 
 namespace FamilyTrustFund.Api.Auth;
 
@@ -12,6 +14,22 @@ public static class AuthEndpoints
     public static IEndpointRouteBuilder MapAuthEndpoints(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/api/auth");
+
+        // Sign-in capability discovery: the SPA decides whether to present the
+        // email OTP flow and/or the Google button without hard-coding config.
+        group.MapGet("/options", async (
+            IOptions<LoginOtpOptions> otpOptions,
+            IOptions<TermsOptions> termsOptions,
+            IAuthenticationSchemeProvider schemes) =>
+        {
+            var googleConfigured = await schemes.GetSchemeAsync("Google") is not null;
+            return Results.Ok(new AuthOptionsResponse
+            {
+                OtpEnabled = otpOptions.Value.Enabled,
+                GoogleEnabled = googleConfigured,
+                TermsVersion = termsOptions.Value.CurrentVersion,
+            });
+        });
 
         group.MapGet("/login", async (
             HttpContext ctx) =>
@@ -136,10 +154,18 @@ public static class AuthEndpoints
                 Email = user.Email!,
                 DisplayName = user.DisplayName,
                 Roles = roles.ToArray(),
+                GuarantorApprovalStatus = user.GuarantorApprovalStatus.ToString(),
             });
         });
 
         return app;
+    }
+
+    public sealed record AuthOptionsResponse
+    {
+        public bool OtpEnabled { get; init; }
+        public bool GoogleEnabled { get; init; }
+        public string TermsVersion { get; init; } = string.Empty;
     }
 
     public sealed record CurrentUserResponse
@@ -148,5 +174,11 @@ public static class AuthEndpoints
         public string Email { get; init; } = string.Empty;
         public string DisplayName { get; init; } = string.Empty;
         public string[] Roles { get; init; } = Array.Empty<string>();
+
+        /// <summary>
+        /// Guarantor approval state (e.g. "Pending") so the UI can explain that
+        /// a guarantor account is awaiting a Super Admin decision.
+        /// </summary>
+        public string GuarantorApprovalStatus { get; init; } = string.Empty;
     }
 }

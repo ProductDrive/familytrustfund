@@ -1,10 +1,34 @@
 import { useState } from 'react'
-import { useSignInOptions, useDevLogin, type Role } from '../features/auth/authApi'
+import {
+  useAuthOptions,
+  useRequestOtp,
+  useVerifyOtp,
+  useSignInOptions,
+  useDevLogin,
+  type Role,
+} from '../features/auth/authApi'
 import { LogoMark } from '../components/ui/Avatar'
 import { Button } from '../components/ui/Button'
 
+type Step = 'email' | 'terms' | 'code' | 'pending'
+
 export function LoginPage() {
-  const { devEnabled, googleEnabled } = useSignInOptions()
+  const { data: options } = useAuthOptions()
+  const { devEnabled } = useSignInOptions()
+
+  const otpEnabled = options?.otpEnabled ?? false
+  const googleEnabled = options?.googleEnabled ?? false
+  const termsVersion = options?.termsVersion ?? '1.0'
+
+  if (!options && !devEnabled) {
+    return (
+      <div className="login-page">
+        <main className="login-card">
+          <p className="muted">Checking sign-in options…</p>
+        </main>
+      </div>
+    )
+  }
 
   return (
     <div className="login-page">
@@ -17,6 +41,10 @@ export function LoginPage() {
           </div>
         </header>
 
+        {otpEnabled && <OtpSignIn termsVersion={termsVersion} />}
+
+        {otpEnabled && googleEnabled && <Divider label="or" />}
+
         {googleEnabled && (
           <a className="btn btn--secondary btn-google" href="/api/auth/google/challenge">
             <GoogleMark />
@@ -24,16 +52,232 @@ export function LoginPage() {
           </a>
         )}
 
-        {googleEnabled && devEnabled && <Divider label="or" />}
-
-        {devEnabled && <DevSignInForm />}
-
-        {!googleEnabled && !devEnabled && (
-          <p className="muted">Checking sign-in options…</p>
+        {devEnabled && (
+          <>
+            {(otpEnabled || googleEnabled) && <Divider label="dev" />}
+            <DevSignInForm />
+          </>
         )}
       </main>
     </div>
   )
+}
+
+function OtpSignIn({ termsVersion }: { termsVersion: string }) {
+  const requestOtp = useRequestOtp()
+  const verifyOtp = useVerifyOtp()
+
+  const [step, setStep] = useState<Step>('email')
+  const [email, setEmail] = useState('')
+  const [role, setRole] = useState<'Member' | 'Guarantor'>('Member')
+  const [termsAccepted, setTermsAccepted] = useState(false)
+  const [code, setCode] = useState('')
+  const [error, setError] = useState<string | null>(null)
+
+  function sendCode(withTerms: boolean) {
+    setError(null)
+    requestOtp.mutate(
+      {
+        email: email.trim(),
+        role: role as Role,
+        termsAccepted: withTerms,
+        termsVersion: withTerms ? termsVersion : undefined,
+      },
+      {
+        onSuccess: () => {
+          setTermsAccepted(withTerms)
+          setCode('')
+          setStep('code')
+        },
+        onError: (err) => setError(errorMessage(err)),
+      },
+    )
+  }
+
+  function handleEmailStep(e: React.FormEvent) {
+    e.preventDefault()
+    if (!email.trim()) return
+    if (role === 'Guarantor' && !termsAccepted) {
+      setError(null)
+      setStep('terms')
+      return
+    }
+    sendCode(role === 'Guarantor')
+  }
+
+  function handleVerify(e: React.FormEvent) {
+    e.preventDefault()
+    if (!code.trim()) return
+    setError(null)
+    verifyOtp.mutate(
+      { email: email.trim(), code: code.trim() },
+      {
+        onSuccess: (user) => {
+          if (user.guarantorApprovalStatus === 'Pending') {
+            setStep('pending')
+            return
+          }
+          window.location.href = '/'
+        },
+        onError: (err) => setError(errorMessage(err)),
+      },
+    )
+  }
+
+  if (step === 'pending') {
+    return (
+      <div>
+        <p className="form-title">Guarantor review in progress</p>
+        <p className="muted">
+          Your account is being reviewed by a Super Admin. You can continue as a member while you
+          wait.
+        </p>
+        <Button className="btn--block" onClick={() => (window.location.href = '/')}>
+          Continue to dashboard
+        </Button>
+      </div>
+    )
+  }
+
+  if (step === 'terms') {
+    return (
+      <div>
+        <p className="form-title">Guarantor terms</p>
+        <p className="muted">
+          Guarantors create and manage lending funds and are responsible for confirming contributions
+          and repayments.
+        </p>
+        <ul className="otp-terms">
+          <li>Guarantor accounts are reviewed and approved by a Super Admin.</li>
+          <li>Committed capital is an indication of funds you are willing to lend, not a deposit.</li>
+          <li>You are responsible for confirming manual contributions and repayments.</li>
+        </ul>
+        <label className="otp-check">
+          <input
+            type="checkbox"
+            checked={termsAccepted}
+            onChange={(e) => setTermsAccepted(e.target.checked)}
+          />
+          <span>I accept the guarantor terms (version {termsVersion}).</span>
+        </label>
+        {error && <p className="form-error">{error}</p>}
+        <Button
+          className="btn--block"
+          disabled={!termsAccepted || requestOtp.isPending}
+          onClick={() => sendCode(true)}
+        >
+          {requestOtp.isPending ? 'Sending code…' : 'Accept and continue'}
+        </Button>
+        <button
+          type="button"
+          className="link-button"
+          onClick={() => {
+            setError(null)
+            setStep('email')
+          }}
+        >
+          Back
+        </button>
+      </div>
+    )
+  }
+
+  if (step === 'code') {
+    return (
+      <form onSubmit={handleVerify}>
+        <p className="form-title">Enter your code</p>
+        <p className="muted">
+          We sent a 6-digit code to <strong>{email.trim()}</strong>.
+        </p>
+        <div className="field">
+          <label htmlFor="otp-code">Sign-in code</label>
+          <input
+            id="otp-code"
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            maxLength={10}
+            value={code}
+            onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
+            placeholder="123456"
+            autoFocus
+          />
+          <p className="field-hint">The code expires in a few minutes.</p>
+        </div>
+        {error && <p className="form-error">{error}</p>}
+        <Button type="submit" className="btn--block" disabled={verifyOtp.isPending || !code.trim()}>
+          {verifyOtp.isPending ? 'Verifying…' : 'Sign in'}
+        </Button>
+        <button
+          type="button"
+          className="link-button"
+          disabled={requestOtp.isPending}
+          onClick={() => sendCode(termsAccepted)}
+        >
+          {requestOtp.isPending ? 'Sending…' : 'Resend code'}
+        </button>
+        <button
+          type="button"
+          className="link-button"
+          onClick={() => {
+            setError(null)
+            setStep(role === 'Guarantor' ? 'terms' : 'email')
+          }}
+        >
+          Use a different email
+        </button>
+      </form>
+    )
+  }
+
+  return (
+    <form onSubmit={handleEmailStep}>
+      <p className="form-title">Sign in or create an account</p>
+      <p className="muted">We will email you a one-time code. No password needed.</p>
+      <div className="field">
+        <label htmlFor="otp-email">Email address</label>
+        <input
+          id="otp-email"
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="you@example.com"
+          autoComplete="email"
+          autoFocus
+        />
+      </div>
+      <div className="field">
+        <label htmlFor="otp-role">Join as</label>
+        <select
+          id="otp-role"
+          value={role}
+          onChange={(e) => {
+            setRole(e.target.value as 'Member' | 'Guarantor')
+            setTermsAccepted(false)
+          }}
+        >
+          <option value="Member">Member</option>
+          <option value="Guarantor">Guarantor</option>
+        </select>
+        <p className="field-hint">
+          {role === 'Guarantor'
+            ? 'Guarantor accounts are reviewed by a Super Admin before activation.'
+            : 'Members join funds and request loans using a guarantor code.'}
+        </p>
+      </div>
+      {error && <p className="form-error">{error}</p>}
+      <Button type="submit" className="btn--block" disabled={requestOtp.isPending || !email.trim()}>
+        {requestOtp.isPending ? 'Sending code…' : 'Continue'}
+      </Button>
+    </form>
+  )
+}
+
+function errorMessage(err: unknown): string {
+  const e = err as { status?: number; message?: string }
+  if (e?.status === 429) {
+    return 'Too many attempts. Please wait a moment and try again.'
+  }
+  return e?.message ?? 'Something went wrong. Please try again.'
 }
 
 function Divider({ label }: { label: string }) {
@@ -66,7 +310,6 @@ function GoogleMark() {
 function DevSignInForm() {
   const devLogin = useDevLogin()
   const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
   const [role, setRole] = useState<Role>('Member')
 
   function handleSubmit(e: React.FormEvent) {
@@ -85,7 +328,7 @@ function DevSignInForm() {
   return (
     <form onSubmit={handleSubmit}>
       <p className="form-title">Development sign-in</p>
-      <p className="muted">For local testing only — any password works.</p>
+      <p className="muted">Local-only shortcut. Exercises the real role and cookie pipeline.</p>
       <div className="field">
         <label htmlFor="dev-email">Email</label>
         <input
@@ -94,19 +337,6 @@ function DevSignInForm() {
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           placeholder="you@example.com"
-          autoComplete="email"
-          required
-        />
-      </div>
-      <div className="field">
-        <label htmlFor="dev-password">Password</label>
-        <input
-          id="dev-password"
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          placeholder="••••••••"
-          autoComplete="current-password"
         />
       </div>
       <div className="field">

@@ -1,3 +1,4 @@
+using FamilyTrustFund.Domain.Auth;
 using FamilyTrustFund.Domain.Contributions;
 using FamilyTrustFund.Domain.Evidence;
 using FamilyTrustFund.Domain.Funds;
@@ -41,6 +42,8 @@ public class ApplicationDbContext : IdentityDbContext<
     public DbSet<PendingRepayment> PendingRepayments => Set<PendingRepayment>();
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
     public DbSet<PaymentEvidence> PaymentEvidences => Set<PaymentEvidence>();
+    public DbSet<LoginOtp> LoginOtps => Set<LoginOtp>();
+    public DbSet<TermsAcceptance> TermsAcceptances => Set<TermsAcceptance>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {

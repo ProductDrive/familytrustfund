@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Threading.RateLimiting;
 using FamilyTrustFund.Api.Antiforgery;
 using FamilyTrustFund.Api.Auth;
 using FamilyTrustFund.Api.Administration;
@@ -10,11 +11,14 @@ using FamilyTrustFund.Api.Loans;
 using FamilyTrustFund.Api.Membership;
 using FamilyTrustFund.Api.Payments;
 using FamilyTrustFund.Api.Repayments;
+using FamilyTrustFund.Application.Notifications;
 using FamilyTrustFund.Application.Payments;
 using FamilyTrustFund.Domain.Auth;
+using FamilyTrustFund.Infrastructure.Auth;
 using FamilyTrustFund.Infrastructure.Data;
 using FamilyTrustFund.Infrastructure.Evidence;
 using FamilyTrustFund.Infrastructure.Identity;
+using FamilyTrustFund.Infrastructure.Notifications;
 using FamilyTrustFund.Infrastructure.Payments;
 using FamilyTrustFund.Infrastructure.Storage;
 using Microsoft.AspNetCore.Authentication.Cookies;
@@ -66,6 +70,21 @@ builder.Services.Configure<FileSystemStorageOptions>(builder.Configuration.GetSe
 builder.Services.AddSingleton<FamilyTrustFund.Application.Storage.IFileStorage, FileSystemStorage>();
 builder.Services.AddScoped<FamilyTrustFund.Application.Evidence.IEvidenceRepository, EvidenceRepository>();
 builder.Services.AddScoped<FamilyTrustFund.Application.Evidence.EvidenceService>();
+
+// ---- Email + passwordless sign-in (OTP) ----
+// Primary authentication path. Google OIDC remains available as a secondary
+// option; the SPA discovers both through /api/auth/options.
+builder.Services.Configure<EmailOptions>(builder.Configuration.GetSection(EmailOptions.SectionName));
+builder.Services.AddScoped<IEmailSender, AfeEmailSender>();
+builder.Services.Configure<FamilyTrustFund.Application.Auth.LoginOtpOptions>(
+    builder.Configuration.GetSection(FamilyTrustFund.Application.Auth.LoginOtpOptions.SectionName));
+builder.Services.Configure<FamilyTrustFund.Application.Auth.TermsOptions>(
+    builder.Configuration.GetSection(FamilyTrustFund.Application.Auth.TermsOptions.SectionName));
+builder.Services.AddScoped<FamilyTrustFund.Application.Auth.ILoginOtpRepository, LoginOtpRepository>();
+builder.Services.AddScoped<FamilyTrustFund.Application.Auth.ITermsAcceptanceRepository, TermsAcceptanceRepository>();
+builder.Services.AddScoped<FamilyTrustFund.Application.Auth.LoginOtpService>();
+var otpEnabled = builder.Configuration.GetValue<bool>(
+    $"{FamilyTrustFund.Application.Auth.LoginOtpOptions.SectionName}:Enabled");
 
 // ---- JSON options (readable string enums in API contracts) ----
 // Enums are serialized with their exact member names (e.g. "Active",
@@ -180,6 +199,32 @@ builder.Services.Configure<DevAuthOptions>(o =>
 // ---- Authorization policies ----
 builder.Services.AddAuthorizationBuilder().AddApiPolicies();
 
+// ---- Rate limiting (OTP endpoints) ----
+// Sends and verifications are throttled per client IP to blunt code-guessing
+// and mail-bombing. A 429 is returned when the limit is exceeded.
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.AddPolicy(OtpAuthEndpoints.RequestPolicy, context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 5,
+                Window = TimeSpan.FromMinutes(10),
+                QueueLimit = 0,
+            }));
+    options.AddPolicy(OtpAuthEndpoints.VerifyPolicy, context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 10,
+                Window = TimeSpan.FromMinutes(10),
+                QueueLimit = 0,
+            }));
+});
+
 // ---- OpenAPI document (used by Swagger UI) ----
 builder.Services.AddOpenApi(options =>
 {
@@ -242,9 +287,14 @@ if (enableApiDocs)
 app.UseCors();
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseRateLimiter();
 app.UseAntiforgery();
 
 app.MapAuthEndpoints();
+if (otpEnabled)
+{
+    app.MapOtpAuthEndpoints();
+}
 app.MapAntiforgeryEndpoints();
 app.MapFundEndpoints();
 app.MapMembershipEndpoints();

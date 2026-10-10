@@ -1,12 +1,15 @@
 using FamilyTrustFund.Application.Audit;
+using FamilyTrustFund.Application.Auth;
 using FamilyTrustFund.Application.Contributions;
 using FamilyTrustFund.Application.Evidence;
 using FamilyTrustFund.Application.Funds;
 using FamilyTrustFund.Application.Loans;
 using FamilyTrustFund.Application.Membership;
+using FamilyTrustFund.Application.Notifications;
 using FamilyTrustFund.Application.Payments;
 using FamilyTrustFund.Application.Repayments;
 using FamilyTrustFund.Application.Storage;
+using FamilyTrustFund.Domain.Auth;
 using FamilyTrustFund.Domain.Contributions;
 using FamilyTrustFund.Domain.Evidence;
 using FamilyTrustFund.Domain.Funds;
@@ -631,4 +634,69 @@ public sealed class FakePendingRepaymentRepository : IPendingRepaymentRepository
     public void Add(PendingRepayment pending) => Items.Add(pending);
 
     public Task SaveChangesAsync(CancellationToken ct = default) => Task.CompletedTask;
+}
+
+public sealed class FakeLoginOtpRepository : ILoginOtpRepository
+{
+    public List<LoginOtp> Items { get; } = new();
+
+    public Task<LoginOtp?> GetLatestByEmailAsync(string normalizedEmail, CancellationToken ct = default) =>
+        Task.FromResult(Items
+            .Where(o => o.Email == normalizedEmail)
+            .OrderByDescending(o => o.CreatedAtUtc)
+            .FirstOrDefault());
+
+    public Task<LoginOtp?> GetLatestUnconsumedAsync(string normalizedEmail, CancellationToken ct = default) =>
+        Task.FromResult(Items
+            .Where(o => o.Email == normalizedEmail && o.ConsumedAtUtc == null)
+            .OrderByDescending(o => o.CreatedAtUtc)
+            .FirstOrDefault());
+
+    public Task<IReadOnlyList<LoginOtp>> GetUnconsumedByEmailAsync(
+        string normalizedEmail,
+        CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<LoginOtp>>(
+            Items.Where(o => o.Email == normalizedEmail && o.ConsumedAtUtc == null).ToList());
+
+    public void Add(LoginOtp otp) => Items.Add(otp);
+
+    public void RemoveRange(IEnumerable<LoginOtp> otps)
+    {
+        foreach (var otp in otps.ToList())
+        {
+            Items.Remove(otp);
+        }
+    }
+
+    public Task SaveChangesAsync(CancellationToken ct = default) => Task.CompletedTask;
+}
+
+public sealed class FakeTermsAcceptanceRepository : ITermsAcceptanceRepository
+{
+    public List<TermsAcceptance> Items { get; } = new();
+
+    public Task<bool> ExistsAsync(Guid userId, string version, CancellationToken ct = default) =>
+        Task.FromResult(Items.Any(t => t.UserId == userId && t.Version == version));
+
+    public void Add(TermsAcceptance acceptance) => Items.Add(acceptance);
+
+    public Task SaveChangesAsync(CancellationToken ct = default) => Task.CompletedTask;
+}
+
+public sealed class FakeEmailSender : IEmailSender
+{
+    public List<EmailMessage> Sent { get; } = new();
+
+    public Exception? FailWith { get; set; }
+
+    public Task SendAsync(EmailMessage message, CancellationToken ct = default)
+    {
+        if (FailWith is not null)
+        {
+            throw FailWith;
+        }
+
+        Sent.Add(message);
+        return Task.CompletedTask;
+    }
 }

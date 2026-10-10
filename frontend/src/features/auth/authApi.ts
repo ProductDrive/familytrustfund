@@ -1,4 +1,4 @@
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 
 export type Role = 'SuperAdmin' | 'Guarantor' | 'Member'
@@ -8,6 +8,51 @@ export interface CurrentUser {
   email: string
   displayName: string
   roles: Role[]
+  guarantorApprovalStatus: string
+}
+
+export interface AuthOptions {
+  otpEnabled: boolean
+  googleEnabled: boolean
+  termsVersion: string
+}
+
+export function useAuthOptions() {
+  return useQuery({
+    queryKey: ['auth-options'],
+    queryFn: () => api.get<AuthOptions>('/auth/options'),
+    retry: false,
+    staleTime: 5 * 60 * 1000,
+  })
+}
+
+export interface OtpRequest {
+  email: string
+  role: Role
+  termsAccepted: boolean
+  termsVersion?: string
+}
+
+export interface OtpVerifyRequest {
+  email: string
+  code: string
+}
+
+export function useRequestOtp() {
+  return useMutation({
+    mutationFn: (input: OtpRequest) => api.post<void>('/auth/otp/request', input),
+  })
+}
+
+export function useVerifyOtp() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (input: OtpVerifyRequest) => api.post<CurrentUser>('/auth/otp/verify', input),
+    onSuccess: (user) => {
+      // Seed the cache so the authenticated shell renders immediately.
+      queryClient.setQueryData(['me'], user)
+    },
+  })
 }
 
 export interface DevLoginRequest {
