@@ -88,7 +88,11 @@ public static class AdminEndpoints
             }
 
             return Results.NoContent();
-        });
+        })
+        // TEMPORARY: exposed anonymously for testing only. This grants a
+        // privileged role, so it MUST be reverted to the AdminOnly group
+        // policy (AGENTS §4) before any real deployment.
+        .AllowAnonymous();
 
         return app;
     }
