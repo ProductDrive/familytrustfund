@@ -194,15 +194,15 @@ public class Loan
 
     /// <summary>
     /// The Guarantor cancels a loan that has not yet been disbursed —
-    /// either a pending request or an approved-but-not-disbursed loan.
-    /// A cancellation is a permanent terminal state; disbursed or completed
-    /// loans can never be cancelled.
+    /// pending, approved, or disbursement-pending (e.g. failed/incomplete
+    /// disbursement). A cancellation is a permanent terminal state; disbursed
+    /// or completed loans can never be cancelled.
     /// </summary>
     public void CancelByGuarantor(Guid guarantorId)
     {
-        if (Status != LoanStatus.Pending && Status != LoanStatus.Approved)
+        if (Status != LoanStatus.Pending && Status != LoanStatus.Approved && Status != LoanStatus.DisbursementPending)
         {
-            throw new InvalidLoanException("Only pending or approved (not yet disbursed) loans can be cancelled.");
+            throw new InvalidLoanException("Only pending, approved, or disbursement-pending (not yet disbursed) loans can be cancelled.");
         }
 
         CancelledByUserId = guarantorId;

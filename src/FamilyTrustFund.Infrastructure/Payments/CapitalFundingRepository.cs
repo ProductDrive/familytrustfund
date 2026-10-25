@@ -22,6 +22,11 @@ public class CapitalFundingRepository : ICapitalFundingRepository
         CancellationToken ct = default) =>
         _db.CapitalTransactions.FirstOrDefaultAsync(t => t.ProviderReference == providerReference, ct);
 
+    public Task<CapitalTransaction?> GetByLoanAsync(Guid loanId, CancellationToken ct = default) =>
+        _db.CapitalTransactions
+            .OrderByDescending(t => t.InitiatedAtUtc)
+            .FirstOrDefaultAsync(t => t.LoanId == loanId, ct);
+
     public async Task<IReadOnlyList<CapitalTransaction>> GetByFundAsync(
         Guid fundId,
         int page,

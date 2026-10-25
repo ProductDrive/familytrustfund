@@ -5,6 +5,7 @@ import { ExternalLink, HandCoins, RefreshCw, Send, ShieldCheck, X } from 'lucide
 import { useFunds } from '../funds/fundApi'
 import { useFundLoans, useGuarantorCancelLoan } from '../loans/loanApi'
 import {
+  useCancelDisbursement,
   useDisburseLoan,
   useGuarantorLoanDisbursement,
   useVerifyCapitalPayment,
@@ -77,6 +78,7 @@ function PendingActions({
 function DisburseButton({ loan }: { loan: Loan }) {
   const disburse = useDisburseLoan()
   const cancel = useGuarantorCancelLoan()
+  const cancelDisbursement = useCancelDisbursement()
   const { data: disbursement, isLoading } = useGuarantorLoanDisbursement(loan.id)
 
   function initiate() {
@@ -113,13 +115,31 @@ function DisburseButton({ loan }: { loan: Loan }) {
               {disbursement.failureReason}
             </span>
           )}
-          <Button
-            size="sm"
-            onClick={initiate}
-            disabled={disburse.isPending}
-          >
-            <RefreshCw size={14} /> {disburse.isPending ? 'Initiating…' : 'Retry payment'}
-          </Button>
+          <div style={cellRow}>
+            <Button
+              size="sm"
+              onClick={initiate}
+              disabled={disburse.isPending}
+            >
+              <RefreshCw size={14} /> {disburse.isPending ? 'Initiating…' : 'Retry payment'}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={cancelDisbursement.isPending}
+              onClick={() => {
+                if (
+                  window.confirm(
+                    `Cancel this disbursement for ${loan.memberDisplayName || 'the member'}?`,
+                  )
+                ) {
+                  cancelDisbursement.mutate({ loanId: loan.id })
+                }
+              }}
+            >
+              <X size={14} /> {cancelDisbursement.isPending ? 'Cancelling…' : 'Cancel'}
+            </Button>
+          </div>
         </div>
       )
     }
@@ -150,6 +170,25 @@ function DisburseButton({ loan }: { loan: Loan }) {
 
         {disbursement.status === 'Pending' && (
           <PendingActions disbursement={disbursement} loan={loan} />
+        )}
+
+        {disbursement.status === 'Pending' && (
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={cancelDisbursement.isPending}
+            onClick={() => {
+              if (
+                window.confirm(
+                  `Cancel this disbursement for ${loan.memberDisplayName || 'the member'}? The loan will be cancelled and you won't need to complete payment.`,
+                )
+              ) {
+                cancelDisbursement.mutate({ loanId: loan.id })
+              }
+            }}
+          >
+            <X size={14} /> {cancelDisbursement.isPending ? 'Cancelling…' : 'Cancel disbursement'}
+          </Button>
         )}
       </div>
     )

@@ -258,8 +258,9 @@ public class LoanService
     }
 
     /// <summary>
-    /// Guarantor cancels a pending or approved (not yet disbursed) loan in one of
-    /// their funds. Disbursed and completed loans can never be cancelled.
+    /// Guarantor cancels a pending, approved, or disbursement-pending (not yet
+    /// disbursed) loan in one of their funds. Disbursed and completed loans can
+    /// never be cancelled.
     /// </summary>
     public async Task<LoanDto> CancelLoanByGuarantorAsync(
         Guid guarantorId,

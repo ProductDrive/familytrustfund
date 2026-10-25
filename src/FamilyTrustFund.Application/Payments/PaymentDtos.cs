@@ -153,3 +153,5 @@ public sealed class CollectionVerificationResult
     public static CollectionVerificationResult Fail(string reason) =>
         new() { Success = false, RejectionReason = reason };
 }
+
+public sealed record CancelDisbursementRequest(string? Reason);

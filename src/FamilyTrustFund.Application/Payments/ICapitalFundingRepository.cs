@@ -11,6 +11,8 @@ public interface ICapitalFundingRepository
 
     Task<CapitalTransaction?> GetByProviderReferenceAsync(string providerReference, CancellationToken ct = default);
 
+    Task<CapitalTransaction?> GetByLoanAsync(Guid loanId, CancellationToken ct = default);
+
     Task<IReadOnlyList<CapitalTransaction>> GetByFundAsync(
         Guid fundId,
         int page,

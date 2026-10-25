@@ -163,6 +163,20 @@ export function useVerifyCapitalPayment(fundId: string | null) {
   })
 }
 
+export function useCancelDisbursement() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ loanId, reason }: { loanId: string; reason?: string | null }) =>
+      api.post(`/guarantor/payments/disbursement/${loanId}/cancel`, { reason }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['guarantor', 'loans'] })
+      qc.invalidateQueries({ queryKey: ['loans'] })
+      qc.invalidateQueries({ queryKey: ['payments'] })
+      qc.invalidateQueries({ queryKey: ['guarantor', 'payments'] })
+    },
+  })
+}
+
 export function useCapitalTransactions(
   fundId: string | null,
   page = 1,

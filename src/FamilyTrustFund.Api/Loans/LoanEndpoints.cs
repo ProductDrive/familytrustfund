@@ -226,7 +226,7 @@ public static class LoanEndpoints
             }
         });
 
-        // Cancel a pending or approved (not yet disbursed) loan (Guarantor).
+        // Cancel a pending, approved, or disbursement-pending (not yet disbursed) loan (Guarantor).
         guarantorGroup.MapPost("/cancel", async (
             HttpContext http,
             UserManager<ApplicationUser> userManager,

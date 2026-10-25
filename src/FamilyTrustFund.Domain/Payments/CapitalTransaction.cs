@@ -192,6 +192,25 @@ public class CapitalTransaction
     }
 
     /// <summary>
+    /// Cancels a capital payment that has not been confirmed.
+    /// </summary>
+    public void Cancel(string? reason = null)
+    {
+        if (Status == CapitalTransactionStatus.Confirmed)
+        {
+            throw new InvalidPaymentException("A confirmed capital payment cannot be cancelled.");
+        }
+
+        Status = CapitalTransactionStatus.Failed;
+        FailureReason = string.IsNullOrWhiteSpace(reason) ? (FailureReason ?? "Cancelled") : reason.Trim();
+        if (CompletedAtUtc is null)
+        {
+            CompletedAtUtc = DateTime.UtcNow;
+        }
+        Touch();
+    }
+
+    /// <summary>
     /// Estimates the provider fee for a gross amount using the default NGN
     /// schedule (1.5% + ₦100, capped at ₦2,000; ₦100 waived under ₦2,500).
     /// Used only for display; the provider's fee at confirmation is authoritative.

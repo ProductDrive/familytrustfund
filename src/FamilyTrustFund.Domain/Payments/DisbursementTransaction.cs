@@ -164,5 +164,24 @@ public class DisbursementTransaction
         Touch();
     }
 
+    /// <summary>
+    /// Cancels a disbursement that is still pending or failed and cannot proceed.
+    /// </summary>
+    public void Cancel(string? reason = null)
+    {
+        if (Status == DisbursementStatus.Successful || Status == DisbursementStatus.Reversed)
+        {
+            throw new InvalidPaymentException("A completed or reversed disbursement cannot be cancelled.");
+        }
+
+        Status = DisbursementStatus.Failed;
+        FailureReason = string.IsNullOrWhiteSpace(reason) ? (FailureReason ?? "Cancelled") : reason.Trim();
+        if (CompletedAtUtc is null)
+        {
+            CompletedAtUtc = DateTime.UtcNow;
+        }
+        Touch();
+    }
+
     private void Touch() => UpdatedAtUtc = DateTime.UtcNow;
 }

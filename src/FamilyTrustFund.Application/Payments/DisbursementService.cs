@@ -387,6 +387,75 @@ public class DisbursementService
             ct);
     }
 
+    /// <summary>
+    /// Cancels a disbursement and related capital payment for a loan that has
+    /// not yet been disbursed. Used when the Guarantor wants to abort a
+    /// disbursement-in-progress or after a failed attempt.
+    /// </summary>
+    public async Task<DisbursementDto?> CancelDisbursementForLoanAsync(
+        Guid guarantorId,
+        Guid loanId,
+        string? reason = null,
+        CancellationToken ct = default)
+    {
+        var loan = await _loanRepository.GetByIdAsync(loanId, ct)
+            ?? throw new InvalidPaymentException("Loan not found.");
+
+        var fund = await _fundRepository.GetByIdAsync(loan.FundId, ct)
+            ?? throw new InvalidPaymentException("Fund not found.");
+
+        if (fund.GuarantorId != guarantorId)
+        {
+            throw new InvalidPaymentException("You do not have permission to cancel this disbursement.");
+        }
+
+        if (loan.Status == LoanStatus.Disbursed || loan.Status == LoanStatus.Completed || loan.Status == LoanStatus.Defaulted)
+        {
+            throw new InvalidPaymentException("Disbursed loans cannot be cancelled.");
+        }
+
+        var transaction = await _paymentRepository.GetByLoanAsync(loan.Id, ct);
+        if (transaction is not null && transaction.Status == DisbursementStatus.Successful)
+        {
+            throw new InvalidPaymentException("A successful disbursement cannot be cancelled.");
+        }
+
+        if (transaction is not null)
+        {
+            transaction.Cancel(reason);
+        }
+
+        var capital = await _capitalFundingRepository.GetByLoanAsync(loan.Id, ct);
+        if (capital is not null && capital.Status == CapitalTransactionStatus.Confirmed)
+        {
+            throw new InvalidPaymentException("A confirmed capital payment cannot be cancelled.");
+        }
+
+        if (capital is not null)
+        {
+            capital.Cancel(reason);
+        }
+
+        if (loan.Status == LoanStatus.DisbursementPending)
+        {
+            loan.CancelByGuarantor(guarantorId);
+            await _auditLog.RecordAsync(guarantorId, "Disbursement.Cancelled", "Loan", loan.Id,
+                reason ?? "Guarantor cancelled disbursement", ct);
+        }
+        else if (loan.Status == LoanStatus.Approved)
+        {
+            loan.CancelByGuarantor(guarantorId);
+            await _auditLog.RecordAsync(guarantorId, "Disbursement.Cancelled", "Loan", loan.Id,
+                reason ?? "Guarantor cancelled approved loan before disbursement", ct);
+        }
+
+        await _paymentRepository.SaveChangesAsync(ct);
+        await _capitalFundingRepository.SaveChangesAsync(ct);
+        await _loanRepository.SaveChangesAsync(ct);
+
+        return transaction is null ? null : ToDisbursementDto(transaction, capital);
+    }
+
     public async Task<PaymentRecipientDto?> GetRecipientForMemberAsync(Guid memberId, CancellationToken ct = default)
     {
         var latest = await _paymentRepository.GetLatestRecipientForMemberAsync(memberId, ct);

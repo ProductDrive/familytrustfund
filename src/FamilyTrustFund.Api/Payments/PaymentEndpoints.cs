@@ -167,6 +167,33 @@ public static class PaymentEndpoints
             return txn is null ? Results.NotFound() : Results.Ok(txn);
         });
 
+        // Cancel disbursement for an approved/disbursement-pending loan (Guarantor, ownership-scoped).
+        guarantorGroup.MapPost("/disbursement/{loanId:guid}/cancel", async (
+            Guid loanId,
+            HttpContext http,
+            UserManager<ApplicationUser> userManager,
+            DisbursementService disbursementService,
+            [FromBody] CancelDisbursementRequest? request,
+            CancellationToken ct) =>
+        {
+            var userId = UserId(http, userManager);
+            if (userId is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            try
+            {
+                var result = await disbursementService.CancelDisbursementForLoanAsync(
+                    userId.Value, loanId, request?.Reason, ct);
+                return result is null ? Results.Ok(new { cancelled = true }) : Results.Ok(result);
+            }
+            catch (InvalidPaymentException ex)
+            {
+                return Results.BadRequest(new { message = ex.Message });
+            }
+        });
+
         // ── Provider webhook (unauthenticated; signature-verified) ────────
         app.MapPost("/api/webhooks/paystack", async (
             HttpRequest request,
