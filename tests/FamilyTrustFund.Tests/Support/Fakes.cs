@@ -411,6 +411,12 @@ public sealed class FakeCapitalFundingRepository : ICapitalFundingRepository
         CancellationToken ct = default) =>
         Task.FromResult(Transactions.FirstOrDefault(t => t.ProviderReference == providerReference));
 
+    public Task<CapitalTransaction?> GetByLoanAsync(Guid loanId, CancellationToken ct = default) =>
+        Task.FromResult(Transactions
+            .Where(t => t.LoanId == loanId)
+            .OrderByDescending(t => t.InitiatedAtUtc)
+            .FirstOrDefault());
+
     public Task<IReadOnlyList<CapitalTransaction>> GetByFundAsync(
         Guid fundId,
         int page,
