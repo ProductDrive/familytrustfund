@@ -427,7 +427,7 @@ code {
 
 .kpi-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 16px;
   margin-bottom: 24px;
 }
@@ -439,14 +439,16 @@ code {
   padding: 18px 20px;
   box-shadow: var(--shadow-card);
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 14px;
   min-width: 0;
+  overflow: hidden;
 }
 
 .kpi > div {
   min-width: 0;
   flex: 1 1 auto;
+  overflow: hidden;
 }
 
 .kpi-icon {
@@ -490,22 +492,29 @@ code {
   font-size: 12px;
   font-weight: 500;
   margin-bottom: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .kpi-value {
-  font-size: 24px;
+  font-size: clamp(18px, 2.2vw, 28px);
   font-weight: 700;
   letter-spacing: -0.02em;
-  line-height: 1.2;
+  line-height: 1.15;
   min-width: 0;
-  word-break: break-word;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .kpi-hint {
   color: var(--text-secondary);
   font-size: 12px;
   margin-top: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ------------------------------------------------------------
@@ -1447,8 +1456,8 @@ code {
   }
 
   .kpi-value {
-    font-size: 20px;
-    line-height: 1.25;
+    font-size: clamp(18px, 5vw, 24px);
+    line-height: 1.2;
   }
 }
 
