@@ -4,18 +4,55 @@ using FamilyTrustFund.Application.Membership;
 using FamilyTrustFund.Domain.Auth;
 using FamilyTrustFund.Infrastructure.Identity;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Mvc;
 
 namespace FamilyTrustFund.Api.Administration;
 
 public sealed record ApproveGuarantorRequest
 {
     public bool Approved { get; init; }
-}
+};
+
+public sealed record GuarantorListRequest
+{
+    public string? Password { get; init; }
+};
 
 public static class AdminEndpoints
 {
     public static IEndpointRouteBuilder MapAdminEndpoints(this IEndpointRouteBuilder app)
     {
+        // TEMPORARY: anonymous endpoint to fetch guarantors for manual approval
+        // Remove after admin app is built
+        app.MapPost("/api/admin/guarantors/list", async (
+            [FromBody] GuarantorListRequest request,
+            UserManager<ApplicationUser> userManager,
+            CancellationToken ct) =>
+        {
+            if (request.Password != "tftfamfund4132")
+            {
+                return Results.Unauthorized();
+            }
+
+            var users = userManager.Users.ToList();
+            var result = new List<object>();
+            foreach (var user in users)
+            {
+                var roles = await userManager.GetRolesAsync(user);
+                result.Add(new
+                {
+                    id = user.Id,
+                    email = user.Email,
+                    phoneNumber = user.PhoneNumber,
+                    roles = roles,
+                    guarantorApprovalStatus = user.GuarantorApprovalStatus.ToString(),
+                    createdAtUtc = user.CreatedAtUtc,
+                });
+            }
+
+            return Results.Ok(result);
+        }).AllowAnonymous();
+
         var group = app.MapGroup("/api/admin")
             .RequireAuthorization(Policy);
 
