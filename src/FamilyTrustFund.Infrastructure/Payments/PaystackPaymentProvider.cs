@@ -193,6 +193,7 @@ public class PaystackPaymentProvider : IPaymentProvider
                 subaccount = request.SubaccountCode,
                 transaction_charge = request.TransactionCharge.HasValue ? ToMinorUnits(request.TransactionCharge.Value) : (long?)null,
                 bearer = request.Bearer,
+                channels = new[] { "card", "bank_transfer" },
             };
 
             using var response = await PostJsonAsync("/transaction/initialize", body, ct);
