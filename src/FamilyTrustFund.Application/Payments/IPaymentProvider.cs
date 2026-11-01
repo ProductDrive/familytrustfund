@@ -67,4 +67,8 @@ public interface IPaymentProvider
     Task<CollectionVerificationResult> VerifyCollectionAsync(
         string providerReference,
         CancellationToken ct = default);
+
+    Task<IReadOnlyList<BankInfo>> GetBanksAsync(CancellationToken ct = default);
 }
+
+public sealed record BankInfo(string Code, string Name);

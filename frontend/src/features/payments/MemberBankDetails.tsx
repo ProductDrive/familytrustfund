@@ -1,10 +1,16 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Landmark, ShieldCheck } from 'lucide-react'
+import { api } from '../../lib/api'
 import { useMyRecipient, useSaveRecipient, useVerifyRecipient } from './paymentApi'
 import { Card } from '../../components/ui/Card'
 import { StatusBadge } from '../../components/ui/Badge'
 import { Button } from '../../components/ui/Button'
 import { SkeletonCard } from '../../components/ui/State'
+
+interface BankOption {
+  code: string
+  name: string
+}
 
 export function MemberBankDetails() {
   const { data: recipient, isLoading } = useMyRecipient()
@@ -12,10 +18,18 @@ export function MemberBankDetails() {
   const verifyRecipient = useVerifyRecipient()
 
   const [showForm, setShowForm] = useState(false)
+  const [banks, setBanks] = useState<BankOption[]>([])
   const [bankName, setBankName] = useState('')
   const [bankCode, setBankCode] = useState('')
   const [accountNumber, setAccountNumber] = useState('')
   const [accountName, setAccountName] = useState('')
+
+  useEffect(() => {
+    api
+      .get<BankOption[]>('/payments/banks')
+      .then(setBanks)
+      .catch(() => setBanks([]))
+  }, [])
 
   const hasRecipient = !!recipient
   const isVerified = recipient?.isActive === true
@@ -91,24 +105,25 @@ export function MemberBankDetails() {
       {showForm && (
         <form onSubmit={submit} style={{ marginTop: 12 }}>
           <div className="field">
-            <label htmlFor="bank-name">Bank name</label>
-            <input
-              id="bank-name"
-              value={bankName}
-              onChange={(e) => setBankName(e.target.value)}
-              placeholder="e.g. GTBank"
-              required
-            />
-          </div>
-          <div className="field">
-            <label htmlFor="bank-code">Bank code</label>
-            <input
-              id="bank-code"
+            <label htmlFor="bank">Bank</label>
+            <select
+              id="bank"
               value={bankCode}
-              onChange={(e) => setBankCode(e.target.value)}
-              placeholder="e.g. 058"
+              onChange={(e) => {
+                const code = e.target.value
+                setBankCode(code)
+                const bank = banks.find((b) => b.code === code)
+                setBankName(bank?.name ?? '')
+              }}
               required
-            />
+            >
+              <option value="">Select bank</option>
+              {banks.map((bank) => (
+                <option key={bank.code} value={bank.code}>
+                  {bank.name}
+                </option>
+              ))}
+            </select>
           </div>
           <div className="field">
             <label htmlFor="account-number">Account number</label>

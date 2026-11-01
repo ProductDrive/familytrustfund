@@ -372,6 +372,43 @@ public class PaystackPaymentProvider : IPaymentProvider
         };
     }
 
+    public async Task<IReadOnlyList<BankInfo>> GetBanksAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            ConfigureAuth();
+            using var response = await _http.GetAsync($"{_options.BaseUrl.TrimEnd('/')}/bank?currency=NGN", ct);
+            using var payload = await ReadPayloadAsync(response, ct);
+            if (!response.IsSuccessStatusCode)
+            {
+                return Array.Empty<BankInfo>();
+            }
+
+            if (!payload.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
+            {
+                return Array.Empty<BankInfo>();
+            }
+
+            var banks = new List<BankInfo>();
+            foreach (var item in data.EnumerateArray())
+            {
+                var name = item.TryGetProperty("name", out var n) ? n.GetString() : null;
+                var code = item.TryGetProperty("code", out var c) ? c.GetString() : null;
+                if (!string.IsNullOrWhiteSpace(name) && !string.IsNullOrWhiteSpace(code))
+                {
+                    banks.Add(new BankInfo(code, name));
+                }
+            }
+
+            return banks.OrderBy(b => b.Name).ToList();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to fetch Paystack banks");
+            return Array.Empty<BankInfo>();
+        }
+    }
+
     private static string ExtractMessage(JsonDocument payload)
     {
         var msg = GetString(payload, "message");

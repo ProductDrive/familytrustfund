@@ -15,6 +15,21 @@ public static class PaymentEndpoints
 {
     public static IEndpointRouteBuilder MapPaymentEndpoints(this IEndpointRouteBuilder app)
     {
+        // ── Public/Shared endpoints ───────────────────────────────────────
+        app.MapGet("/api/payments/banks", async (
+            IPaymentProviderRegistry providers,
+            CancellationToken ct) =>
+        {
+            var provider = providers.Get(DisbursementService.DefaultProvider);
+            if (provider is null)
+            {
+                return Results.Ok(Array.Empty<object>());
+            }
+
+            var banks = await provider.GetBanksAsync(ct);
+            return Results.Ok(banks.Select(b => new { code = b.Code, name = b.Name }));
+        });
+
         // ── Member endpoints ──────────────────────────────────────────────
         var memberGroup = app.MapGroup("/api/payments")
             .RequireAuthorization("MemberOnly");

@@ -510,6 +510,15 @@ public sealed class FakePaymentProvider : IPaymentProvider
             ? CollectionVerificationResult.PaidSuccess(0m, VerifyFee)
             : CollectionVerificationResult.NotPaid("Payment status is 'abandoned'."));
     }
+
+    public Task<IReadOnlyList<BankInfo>> GetBanksAsync(CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<BankInfo>>(new List<BankInfo>
+        {
+            new("011", "First Bank of Nigeria"),
+            new("058", "Guaranty Trust Bank"),
+            new("070", "Fidelity Bank"),
+            new("057", "Zenith Bank"),
+        });
 }
 
 public sealed class FakePaymentProviderRegistry : IPaymentProviderRegistry
