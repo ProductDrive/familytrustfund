@@ -15,6 +15,9 @@ public sealed class FundDto
     public decimal ContributionMultiplier { get; init; }
     public decimal? InterestRate { get; init; }
     public string? HowItWorks { get; init; }
+    public string? RepaymentBankName { get; init; }
+    public string? RepaymentAccountNumber { get; init; }
+    public string? RepaymentAccountName { get; init; }
     public FundStatus Status { get; init; }
     public DateTime? TransitionedAtUtc { get; init; }
     public DateTime CreatedAtUtc { get; init; }

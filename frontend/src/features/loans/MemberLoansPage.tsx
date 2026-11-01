@@ -210,7 +210,12 @@ export function MemberLoansPage() {
                     <div className="cell-secondary">{l.fundType}</div>
                   </td>
                   <td>
-                    <MoneyDisplay amount={l.requestedAmount} />
+                    <MoneyDisplay amount={l.approvedAmount ?? l.requestedAmount} />
+                    {l.approvedAmount && l.approvedAmount !== l.requestedAmount && (
+                      <div className="cell-secondary" style={{ fontSize: 11 }}>
+                        Requested: <MoneyDisplay amount={l.requestedAmount} />
+                      </div>
+                    )}
                   </td>
                   <td>{l.approvedFrequency ?? l.requestedFrequency}</td>
                   <td>

@@ -28,6 +28,15 @@ public class Fund
     /// <summary>Guarantor-authored guidance shown to members of this fund.</summary>
     public string? HowItWorks { get; private set; }
 
+    /// <summary>Bank name for loan repayments.</summary>
+    public string? RepaymentBankName { get; private set; }
+
+    /// <summary>Account number for loan repayments.</summary>
+    public string? RepaymentAccountNumber { get; private set; }
+
+    /// <summary>Account name for loan repayments.</summary>
+    public string? RepaymentAccountName { get; private set; }
+
     public FundStatus Status { get; private set; } = FundStatus.Active;
     public DateTime CreatedAtUtc { get; private set; } = DateTime.UtcNow;
     public DateTime UpdatedAtUtc { get; private set; } = DateTime.UtcNow;
@@ -104,6 +113,28 @@ public class Fund
         }
 
         HowItWorks = string.IsNullOrWhiteSpace(content) ? null : content.Trim();
+        Touch();
+    }
+
+    public void SetRepaymentAccount(string? bankName, string? accountNumber, string? accountName)
+    {
+        if (string.IsNullOrWhiteSpace(bankName) && string.IsNullOrWhiteSpace(accountNumber) && string.IsNullOrWhiteSpace(accountName))
+        {
+            RepaymentBankName = null;
+            RepaymentAccountNumber = null;
+            RepaymentAccountName = null;
+            Touch();
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(bankName) || string.IsNullOrWhiteSpace(accountNumber) || string.IsNullOrWhiteSpace(accountName))
+        {
+            throw new InvalidFundException("All repayment account fields are required when setting repayment details.");
+        }
+
+        RepaymentBankName = bankName.Trim();
+        RepaymentAccountNumber = accountNumber.Trim();
+        RepaymentAccountName = accountName.Trim();
         Touch();
     }
 

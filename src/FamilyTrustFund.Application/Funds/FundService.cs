@@ -93,4 +93,24 @@ public class FundService
         await _repository.SaveChangesAsync(ct);
         return fund;
     }
+
+    public async Task<Fund?> UpdateRepaymentAccountAsync(
+        Guid guarantorId,
+        Guid fundId,
+        UpdateRepaymentAccountRequest request,
+        CancellationToken ct = default)
+    {
+        var fund = await GetFundForGuarantorAsync(guarantorId, fundId, ct);
+        if (fund is null)
+        {
+            return null;
+        }
+
+        fund.SetRepaymentAccount(request.BankName, request.AccountNumber, request.AccountName);
+        await _auditLog.RecordAsync(guarantorId, "Fund.RepaymentAccountUpdated", "Fund", fund.Id, null, ct);
+        await _repository.SaveChangesAsync(ct);
+        return fund;
+    }
 }
+
+public sealed record UpdateRepaymentAccountRequest(string? BankName, string? AccountNumber, string? AccountName);

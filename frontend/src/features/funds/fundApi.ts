@@ -13,6 +13,9 @@ export interface Fund {
   contributionMultiplier: number
   interestRate: number | null
   howItWorks: string | null
+  repaymentBankName: string | null
+  repaymentAccountNumber: string | null
+  repaymentAccountName: string | null
   status: FundStatus
   transitionedAtUtc: string | null
   createdAtUtc: string
@@ -75,6 +78,23 @@ export function useTransitionFund() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['funds'] })
       qc.invalidateQueries({ queryKey: ['loans'] })
+    },
+  })
+}
+
+export interface RepaymentAccountInput {
+  bankName: string | null
+  accountNumber: string | null
+  accountName: string | null
+}
+
+export function useUpdateRepaymentAccount() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ fundId, ...input }: RepaymentAccountInput & { fundId: string }) =>
+      api.put<Fund>(`/funds/${fundId}/repayment-account`, input),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['funds'] })
     },
   })
 }

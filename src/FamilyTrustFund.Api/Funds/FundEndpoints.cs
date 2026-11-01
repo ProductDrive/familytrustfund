@@ -121,6 +121,32 @@ public static class FundEndpoints
             }
         });
 
+        // Update repayment account details for a Guarantor-owned fund.
+        group.MapPut("/{id:guid}/repayment-account", async (
+            Guid id,
+            HttpContext http,
+            UserManager<ApplicationUser> userManager,
+            FundService fundService,
+            [FromBody] UpdateRepaymentAccountRequest request,
+            CancellationToken ct) =>
+        {
+            var userId = UserId(http, userManager);
+            if (userId is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            try
+            {
+                var fund = await fundService.UpdateRepaymentAccountAsync(userId.Value, id, request, ct);
+                return fund is null ? Results.NotFound() : Results.Ok(FundDtoMapper.Map(fund));
+            }
+            catch (InvalidFundException ex)
+            {
+                return Results.BadRequest(new { message = ex.Message });
+            }
+        });
+
         // Transition state for a Guarantor-owned fund (Family Capital readiness).
         // Family Contributions and Committed Capital are always reported as
         // separate pools. The transition itself never happens automatically.
@@ -192,6 +218,9 @@ internal static class FundDtoMapper
         ContributionMultiplier = fund.ContributionMultiplier,
         InterestRate = fund.InterestRate,
         HowItWorks = fund.HowItWorks,
+        RepaymentBankName = fund.RepaymentBankName,
+        RepaymentAccountNumber = fund.RepaymentAccountNumber,
+        RepaymentAccountName = fund.RepaymentAccountName,
         Status = fund.Status,
         TransitionedAtUtc = fund.TransitionedAtUtc,
         CreatedAtUtc = fund.CreatedAtUtc,

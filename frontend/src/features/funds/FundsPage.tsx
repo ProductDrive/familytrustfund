@@ -5,6 +5,7 @@ import {
   useFunds,
   useFundTransitionStatus,
   useTransitionFund,
+  useUpdateRepaymentAccount,
   type Fund,
   type FundType,
   type FundTransitionStatus,
@@ -24,6 +25,7 @@ import { Avatar } from '../../components/ui/Avatar'
 import { Modal } from '../../components/ui/Modal'
 import { EmptyState, SkeletonCard } from '../../components/ui/State'
 import { MoneyDisplay } from '../../lib/money'
+
 
 function CreateFundForm() {
   const createFund = useCreateFund()
@@ -258,8 +260,12 @@ function FundCard({ fund }: { fund: Fund }) {
   const [showMembers, setShowMembers] = useState(false)
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [howItWorks, setHowItWorks] = useState(fund.howItWorks ?? '')
+  const [repaymentBankName, setRepaymentBankName] = useState(fund.repaymentBankName ?? '')
+  const [repaymentAccountNumber, setRepaymentAccountNumber] = useState(fund.repaymentAccountNumber ?? '')
+  const [repaymentAccountName, setRepaymentAccountName] = useState(fund.repaymentAccountName ?? '')
   const members = useFundMembers(fund.id)
   const updateHowItWorks = useUpdateHowItWorks(fund.id)
+  const updateRepaymentAccount = useUpdateRepaymentAccount()
   const capacity = useLendingCapacity(fund.id)
   const transition = useFundTransitionStatus(
     fund.type === 'Family' && fund.status === 'Active' ? fund.id : null,
@@ -346,6 +352,73 @@ function FundCard({ fund }: { fund: Fund }) {
         >
           {updateHowItWorks.isPending ? 'Saving…' : 'Save How It Works'}
         </Button>
+      </form>
+
+      <form
+        onSubmit={(e) => {
+          e.preventDefault()
+          const bankName = repaymentBankName.trim() || null
+          const accountNumber = repaymentAccountNumber.trim() || null
+          const accountName = repaymentAccountName.trim() || null
+          updateRepaymentAccount.mutate({
+            fundId: fund.id,
+            bankName,
+            accountNumber,
+            accountName,
+          })
+        }}
+        style={{ marginTop: 16 }}
+      >
+        <div style={{ marginBottom: 8 }}>
+          <div className="card-title" style={{ marginBottom: 4 }}>
+            <h4 style={{ margin: 0 }}>Repayment account details</h4>
+          </div>
+          <p className="muted" style={{ margin: 0 }}>
+            Shown to members so they know where to send repayments.
+          </p>
+        </div>
+        <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
+          <div className="field">
+            <label htmlFor={`repay-bank-${fund.id}`}>Bank name</label>
+            <input
+              id={`repay-bank-${fund.id}`}
+              value={repaymentBankName}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setRepaymentBankName(e.target.value)}
+            />
+          </div>
+          <div className="field">
+            <label htmlFor={`repay-acctname-${fund.id}`}>Account name</label>
+            <input
+              id={`repay-acctname-${fund.id}`}
+              value={repaymentAccountName}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setRepaymentAccountName(e.target.value)}
+            />
+          </div>
+          <div className="field">
+            <label htmlFor={`repay-acctno-${fund.id}`}>Account number</label>
+            <input
+              id={`repay-acctno-${fund.id}`}
+              value={repaymentAccountNumber}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setRepaymentAccountNumber(e.target.value)}
+            />
+          </div>
+        </div>
+        {updateRepaymentAccount.isError && (
+          <p className="form-error">{(updateRepaymentAccount.error as Error).message}</p>
+        )}
+        {updateRepaymentAccount.isSuccess && (
+          <p className="muted">Repayment account details saved.</p>
+        )}
+        <div style={{ marginTop: 10 }}>
+          <Button
+            type="submit"
+            variant="secondary"
+            size="sm"
+            disabled={updateRepaymentAccount.isPending}
+          >
+            {updateRepaymentAccount.isPending ? 'Saving…' : 'Save repayment account'}
+          </Button>
+        </div>
       </form>
 
       <div style={{ marginTop: 12 }}>

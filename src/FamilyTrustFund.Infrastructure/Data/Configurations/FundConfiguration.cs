@@ -45,6 +45,15 @@ public class FundConfiguration : IEntityTypeConfiguration<Fund>
         builder.Property(f => f.HowItWorks)
             .HasMaxLength(4000);
 
+        builder.Property(f => f.RepaymentBankName)
+            .HasMaxLength(120);
+
+        builder.Property(f => f.RepaymentAccountNumber)
+            .HasMaxLength(30);
+
+        builder.Property(f => f.RepaymentAccountName)
+            .HasMaxLength(160);
+
         builder.Property(f => f.CreatedAtUtc).IsRequired();
         builder.Property(f => f.UpdatedAtUtc).IsRequired();
 

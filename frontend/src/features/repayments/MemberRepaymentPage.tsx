@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Wallet, HandCoins, ArrowDownCircle, BadgeCheck, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useMyLoans } from '../loans/loanApi'
+import { useFunds } from '../funds/fundApi'
 import {
   useScheduleItems,
   useRepaymentSummary,
@@ -26,6 +27,9 @@ export function MemberRepaymentPage() {
   const [loanId, setLoanId] = useState('')
 
   const selectedId = loanId || activeLoans[0]?.id
+  const selectedLoan = activeLoans.find((l) => l.id === selectedId)
+  const { data: funds } = useFunds()
+  const fund = funds?.find((f) => f.id === selectedLoan?.fundId)
 
   const { data: schedule, isLoading: loadingSchedule } = useScheduleItems(selectedId ?? null)
   const { data: summary, isLoading: loadingSummary } = useRepaymentSummary(selectedId ?? null)
@@ -141,50 +145,70 @@ export function MemberRepaymentPage() {
                 marginTop: 24,
               }}
             >
-              <Card title="Repayment Schedule">
-                {loadingSchedule ? (
-                  <SkeletonCard />
-                ) : schedule && schedule.length > 0 ? (
-                  <div className="table-scroll">
-                    <table className="data-table">
-                    <thead>
-                      <tr>
-                        <th>#</th>
-                        <th>Due</th>
-                        <th>Expected</th>
-                        <th>Paid</th>
-                        <th>Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {schedule.map((item) => (
-                        <tr key={item.id}>
-                          <td>{item.sequence}</td>
-                          <td className="cell-secondary">
-                            {formatShortDate(item.dueDateUtc)}
-                          </td>
-                          <td>
-                            <MoneyDisplay amount={item.expectedAmount} />
-                          </td>
-                          <td className="cell-secondary">
-                            <MoneyDisplay amount={item.paidAmount} />
-                          </td>
-                          <td>
-                            <StatusBadge status={item.status} withDot />
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  </div>
-                ) : (
-                  <EmptyState
-                    icon={<HandCoins size={20} />}
-                    title="No schedule"
-                    description="A repayment schedule has not been generated yet."
-                  />
-                )}
-              </Card>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <Card title="Repayment Account">
+                  {fund?.repaymentBankName && fund?.repaymentAccountNumber && fund?.repaymentAccountName ? (
+                    <ul className="property-list">
+                      <li>
+                        <span className="property-label">Bank</span>
+                        <span className="property-value">{fund.repaymentBankName}</span>
+                      </li>
+                      <li>
+                        <span className="property-label">Account Name</span>
+                        <span className="property-value">{fund.repaymentAccountName}</span>
+                      </li>
+                      <li>
+                        <span className="property-label">Account Number</span>
+                        <span className="property-value">{fund.repaymentAccountNumber}</span>
+                      </li>
+                    </ul>
+                  ) : (
+                    <p className="muted">The Guarantor has not set repayment account details yet.</p>
+                  )}
+                </Card>
+                <Card title="Repayment Schedule">
+                  {loadingSchedule ? (
+                    <SkeletonCard />
+                  ) : schedule && schedule.length > 0 ? (
+                    <div className="table-scroll">
+                      <table className="data-table">
+                        <thead>
+                          <tr>
+                            <th>#</th>
+                            <th>Due</th>
+                            <th>Expected</th>
+                            <th>Paid</th>
+                            <th>Status</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {schedule.map((item) => (
+                            <tr key={item.id}>
+                              <td>{item.sequence}</td>
+                              <td className="cell-secondary">{formatShortDate(item.dueDateUtc)}</td>
+                              <td>
+                                <MoneyDisplay amount={item.expectedAmount} />
+                              </td>
+                              <td className="cell-secondary">
+                                <MoneyDisplay amount={item.paidAmount} />
+                              </td>
+                              <td>
+                                <StatusBadge status={item.status} withDot />
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <EmptyState
+                      icon={<HandCoins size={20} />}
+                      title="No schedule"
+                      description="A repayment schedule has not been generated yet."
+                    />
+                  )}
+                </Card>
+              </div>
 
               <div className="stack" style={{ gap: 20 }}>
                 <Card title="Report a payment">
