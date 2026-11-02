@@ -74,6 +74,11 @@ public class FundService
         return fund is null || fund.GuarantorId != guarantorId ? null : fund;
     }
 
+    public async Task<Fund?> GetFundByIdAsync(Guid fundId, CancellationToken ct = default)
+    {
+        return await _repository.GetByIdAsync(fundId, ct);
+    }
+
     public async Task<Fund?> UpdateFundAsync(
         Guid guarantorId,
         Guid fundId,

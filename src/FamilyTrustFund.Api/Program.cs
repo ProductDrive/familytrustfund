@@ -42,6 +42,7 @@ builder.Services.AddScoped<FamilyTrustFund.Application.Funds.IFundRepository, Fa
 builder.Services.AddScoped<FamilyTrustFund.Application.Funds.FundService>();
 builder.Services.AddScoped<FamilyTrustFund.Application.Funds.FundTransitionService>();
 builder.Services.AddScoped<FamilyTrustFund.Application.Membership.IMembershipRepository, FamilyTrustFund.Infrastructure.Membership.MembershipRepository>();
+builder.Services.AddScoped<FamilyTrustFund.Application.Membership.IGuarantorRoleChecker, FamilyTrustFund.Infrastructure.Identity.GuarantorRoleChecker>();
 builder.Services.AddScoped<FamilyTrustFund.Application.Membership.MembershipService>();
 builder.Services.AddScoped<FamilyTrustFund.Application.Loans.ILoanRepository, FamilyTrustFund.Infrastructure.Loans.LoanRepository>();
 builder.Services.AddScoped<FamilyTrustFund.Application.Loans.LoanService>();

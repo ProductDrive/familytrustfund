@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { Wallet, HandCoins, ArrowDownCircle, BadgeCheck, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useMyLoans } from '../loans/loanApi'
-import { useFunds } from '../funds/fundApi'
+import { api } from '../../lib/api'
+import { useQuery } from '@tanstack/react-query'
 import {
   useScheduleItems,
   useRepaymentSummary,
@@ -28,8 +29,11 @@ export function MemberRepaymentPage() {
 
   const selectedId = loanId || activeLoans[0]?.id
   const selectedLoan = activeLoans.find((l) => l.id === selectedId)
-  const { data: funds } = useFunds()
-  const fund = funds?.find((f) => f.id === selectedLoan?.fundId)
+  const { data: fund } = useQuery({
+    queryKey: ['fund', 'member', selectedLoan?.fundId],
+    queryFn: () => api.get<import('../funds/fundApi').Fund>(`/funds/${selectedLoan?.fundId}/member`),
+    enabled: !!selectedLoan?.fundId,
+  })
 
   const { data: schedule, isLoading: loadingSchedule } = useScheduleItems(selectedId ?? null)
   const { data: summary, isLoading: loadingSummary } = useRepaymentSummary(selectedId ?? null)

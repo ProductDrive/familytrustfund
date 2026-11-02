@@ -103,13 +103,9 @@ public static class OtpAuthEndpoints
                     });
                 }
 
-                // Every new account starts as a Member. A Guarantor self-signup
-                // additionally becomes a pending approval (AGENTS §4): the
-                // Guarantor role is granted later by a Super Admin, never here.
-                await userManager.AddToRoleAsync(user, AppRoles.Member);
-
                 if (verification.RequestedRole == AppRoles.Guarantor)
                 {
+                    await userManager.AddToRoleAsync(user, AppRoles.Guarantor);
                     user.GuarantorApprovalStatus = GuarantorApprovalStatus.Pending;
                     await userManager.UpdateAsync(user);
 

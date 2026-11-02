@@ -1,5 +1,6 @@
 using FamilyTrustFund.Application.Audit;
 using FamilyTrustFund.Application.Funds;
+using FamilyTrustFund.Domain.Auth;
 using FamilyTrustFund.Domain.Funds;
 using FamilyTrustFund.Domain.Membership;
 
@@ -14,15 +15,18 @@ public class MembershipService
     private readonly IFundRepository _fundRepository;
     private readonly IMembershipRepository _membershipRepository;
     private readonly IAuditLog _auditLog;
+    private readonly IGuarantorRoleChecker _guarantorRoleChecker;
 
     public MembershipService(
         IFundRepository fundRepository,
         IMembershipRepository membershipRepository,
-        IAuditLog auditLog)
+        IAuditLog auditLog,
+        IGuarantorRoleChecker guarantorRoleChecker)
     {
         _fundRepository = fundRepository;
         _membershipRepository = membershipRepository;
         _auditLog = auditLog;
+        _guarantorRoleChecker = guarantorRoleChecker;
     }
 
     /// <summary>
@@ -37,6 +41,11 @@ public class MembershipService
         JoinFundRequest request,
         CancellationToken ct = default)
     {
+        if (await _guarantorRoleChecker.IsGuarantorAsync(memberId, ct))
+        {
+            throw new InvalidMembershipException("Guarantor accounts cannot join funds.");
+        }
+
         var joinCode = request.JoinCode?.Trim().ToUpperInvariant();
         if (string.IsNullOrWhiteSpace(joinCode))
         {
@@ -70,6 +79,11 @@ public class MembershipService
         await _membershipRepository.SaveChangesAsync(ct);
 
         return ToMembershipDto(membership, fund);
+    }
+
+    public async Task<FundMember?> GetMembershipAsync(Guid memberId, Guid fundId, CancellationToken ct = default)
+    {
+        return await _membershipRepository.GetByFundAndMemberAsync(fundId, memberId, ct);
     }
 
     /// <summary>

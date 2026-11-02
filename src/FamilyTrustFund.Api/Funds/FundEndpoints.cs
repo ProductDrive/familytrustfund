@@ -1,3 +1,4 @@
+using FamilyTrustFund.Api.Authorization;
 using FamilyTrustFund.Application.Funds;
 using FamilyTrustFund.Application.Membership;
 using FamilyTrustFund.Domain.Funds;
@@ -147,6 +148,36 @@ public static class FundEndpoints
             }
         });
 
+        // Get fund details for members (includes repayment account if set).
+        group.MapGet("/{id:guid}/member", async (
+            Guid id,
+            HttpContext http,
+            UserManager<ApplicationUser> userManager,
+            FundService fundService,
+            Application.Membership.MembershipService membershipService,
+            CancellationToken ct) =>
+        {
+            var userId = UserId(http, userManager);
+            if (userId is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            var fund = await fundService.GetFundByIdAsync(id, ct);
+            if (fund is null)
+            {
+                return Results.NotFound();
+            }
+
+            var member = await membershipService.GetMembershipAsync(userId.Value, id, ct);
+            if (member is null || member.Status != Domain.Membership.MemberStatus.Active)
+            {
+                return Results.Forbid();
+            }
+
+            return Results.Ok(FundDtoMapper.Map(fund));
+        }).RequireAuthorization(ApiPolicies.MemberOnly);
+
         // Transition state for a Guarantor-owned fund (Family Capital readiness).
         // Family Contributions and Committed Capital are always reported as
         // separate pools. The transition itself never happens automatically.
@@ -197,7 +228,7 @@ public static class FundEndpoints
         return app;
     }
 
-    private const string Policy = "GuarantorOnly";
+    private const string Policy = ApiPolicies.GuarantorOnly;
 
     private static Guid? UserId(HttpContext http, UserManager<ApplicationUser> userManager)
     {

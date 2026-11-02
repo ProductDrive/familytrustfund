@@ -99,8 +99,6 @@ public static class AuthEndpoints
                         email, string.Join("; ", createResult.Errors.Select(e => e.Description)));
                     return Results.BadRequest(new { message = "Could not create account." });
                 }
-                // Default role for a newly provisioned user. Role changes are
-                // managed by Guarantors/SuperAdmins through membership flows.
                 await userManager.AddToRoleAsync(user, AppRoles.Member);
             }
 

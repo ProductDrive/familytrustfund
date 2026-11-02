@@ -1,4 +1,4 @@
-import { Navigate, Outlet, Route, Routes } from 'react-router-dom'
+import { Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom'
 import { useIsAuthenticated, type Role } from './features/auth/authApi'
 import { AppShell } from './routes/AppShell'
 import { HomePage } from './routes/HomePage'
@@ -14,11 +14,20 @@ import { GuarantorRepaymentsPage } from './features/repayments/GuarantorRepaymen
 import { AdminMembershipsPage } from './features/administration/AdminMembershipsPage'
 import { NotAuthorizedPage } from './routes/NotAuthorizedPage'
 import { LoadingState } from './components/ui/State'
+import { PendingApprovalPage } from './routes/PendingApprovalPage'
 
 function RequireAuth() {
-  const { isLoading, isAuthenticated } = useIsAuthenticated()
+  const location = useLocation()
+  const { isLoading, isAuthenticated, user } = useIsAuthenticated()
   if (isLoading) return <FullPageLoader />
   if (!isAuthenticated) return <Navigate to="/login" replace />
+  if (
+    user?.roles?.includes('Guarantor') &&
+    user.guarantorApprovalStatus === 'Pending' &&
+    location.pathname !== '/pending-approval'
+  ) {
+    return <Navigate to="/pending-approval" replace />
+  }
   return <Outlet />
 }
 
@@ -43,6 +52,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/pending-approval" element={<PendingApprovalPage />} />
       <Route element={<RequireAuth />}>
         <Route element={<AppShell />}>
           <Route index element={<HomePage />} />

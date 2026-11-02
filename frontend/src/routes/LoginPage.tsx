@@ -127,13 +127,12 @@ function OtpSignIn({ termsVersion }: { termsVersion: string }) {
   if (step === 'pending') {
     return (
       <div>
-        <p className="form-title">Guarantor review in progress</p>
+        <p className="form-title">Account awaiting approval</p>
         <p className="muted">
-          Your account is being reviewed by a Super Admin. You can continue as a member while you
-          wait.
+          Your Guarantor account is awaiting approval. Please contact Productdrive.proton.me
         </p>
         <Button className="btn--block" onClick={() => (window.location.href = '/')}>
-          Continue to dashboard
+          Back to sign in
         </Button>
       </div>
     )
