@@ -715,3 +715,8 @@ public sealed class FakeEmailSender : IEmailSender
         return Task.CompletedTask;
     }
 }
+public sealed class FakeGuarantorRoleChecker : FamilyTrustFund.Application.Membership.IGuarantorRoleChecker
+{
+    public bool Guarantor { get; set; }
+    public Task<bool> IsGuarantorAsync(Guid userId, CancellationToken ct = default) => Task.FromResult(Guarantor);
+}

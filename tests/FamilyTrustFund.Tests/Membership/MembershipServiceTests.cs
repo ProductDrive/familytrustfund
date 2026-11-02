@@ -12,7 +12,7 @@ public class MembershipServiceTests
     {
         var funds = new FakeFundRepository();
         var members = new FakeMembershipRepository();
-        return (funds, members, new MembershipService(funds, members, new FakeAuditLog()));
+        return (funds, members, new MembershipService(funds, members, new FakeAuditLog(), new FakeGuarantorRoleChecker()));
     }
 
     private static Fund CreateFund(
@@ -125,7 +125,7 @@ public class MembershipServiceTests
     {
         var (funds, members, _) = Setup();
         var audit = new FakeAuditLog();
-        var service = new MembershipService(funds, members, audit);
+        var service = new MembershipService(funds, members, audit, new FakeGuarantorRoleChecker());
         var member = Guid.NewGuid();
         funds.Funds.Add(CreateFund(Guid.NewGuid()));
 
