@@ -107,6 +107,12 @@ function FundCard({ membership }: { membership: Membership }) {
             <span className="property-value">{membership.interestRate}%</span>
           </li>
         )}
+        <li>
+          <span className="property-label">Loan term range</span>
+          <span className="property-value">
+            {membership.minLoanTermMonths}–{membership.maxLoanTermMonths} months
+          </span>
+        </li>
       </ul>
 
       {membership.howItWorks && (

@@ -248,6 +248,8 @@ internal static class FundDtoMapper
         CommittedCapital = fund.CommittedCapital,
         ContributionMultiplier = fund.ContributionMultiplier,
         InterestRate = fund.InterestRate,
+        MinLoanTermMonths = fund.MinLoanTermMonths,
+        MaxLoanTermMonths = fund.MaxLoanTermMonths,
         HowItWorks = fund.HowItWorks,
         RepaymentBankName = fund.RepaymentBankName,
         RepaymentAccountNumber = fund.RepaymentAccountNumber,

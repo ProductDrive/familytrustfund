@@ -33,6 +33,15 @@ public class Loan
     /// <summary>Repayment frequency after Guarantor approval (may differ from request).</summary>
     public RepaymentFrequency? ApprovedFrequency { get; private set; }
 
+    /// <summary>Loan term in months requested by the member.</summary>
+    public int? RequestedTermMonths { get; private set; }
+
+    /// <summary>Number of instalments requested by the member.</summary>
+    public int? RequestedInstalments { get; private set; }
+
+    /// <summary>Loan term in months approved by the Guarantor.</summary>
+    public int? ApprovedTermMonths { get; private set; }
+
     /// <summary>Number of scheduled instalments for this loan, frozen at approval.</summary>
     public int RepaymentTerm { get; private set; }
 
@@ -78,7 +87,9 @@ public class Loan
         RepaymentFrequency frequency,
         decimal interestRate,
         LoanFundingSource fundingSource,
-        string? purpose = null)
+        string? purpose = null,
+        int? termMonths = null,
+        int? instalments = null)
     {
         if (requestedAmount <= 0)
         {
@@ -90,6 +101,16 @@ public class Loan
             throw new InvalidLoanException("Loan purpose cannot exceed 1000 characters.");
         }
 
+        if (termMonths is <= 0)
+        {
+            throw new InvalidLoanException("Loan term must be greater than zero months.");
+        }
+
+        if (instalments is <= 0)
+        {
+            throw new InvalidLoanException("Number of instalments must be greater than zero.");
+        }
+
         return new Loan
         {
             Id = Guid.NewGuid(),
@@ -98,6 +119,8 @@ public class Loan
             RequestedAmount = requestedAmount,
             InterestRate = interestRate,
             RequestedFrequency = frequency,
+            RequestedTermMonths = termMonths,
+            RequestedInstalments = instalments,
             Status = LoanStatus.Pending,
             FundingSource = fundingSource,
             Purpose = purpose?.Trim(),
@@ -120,7 +143,8 @@ public class Loan
         decimal approvedAmount,
         RepaymentFrequency approvedFrequency,
         decimal totalRepayable,
-        int repaymentTerm = 4)
+        int repaymentTerm = 4,
+        int? approvedTermMonths = null)
     {
         if (Status != LoanStatus.Pending)
         {
@@ -142,9 +166,15 @@ public class Loan
             throw new InvalidLoanException("Repayment term must be a positive number of instalments.");
         }
 
+        if (approvedTermMonths is <= 0)
+        {
+            throw new InvalidLoanException("Approved loan term must be greater than zero months.");
+        }
+
         GuarantorId = guarantorId;
         ApprovedAmount = approvedAmount;
         ApprovedFrequency = approvedFrequency;
+        ApprovedTermMonths = approvedTermMonths ?? RequestedTermMonths;
         RepaymentTerm = repaymentTerm;
         TotalRepayable = totalRepayable;
         OutstandingBalance = approvedAmount;

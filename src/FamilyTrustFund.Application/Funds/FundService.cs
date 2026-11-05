@@ -45,10 +45,13 @@ public class FundService
             request.CommittedCapital,
             joinCode,
             request.ContributionMultiplier,
-            request.InterestRate);
+            request.InterestRate,
+            request.MinLoanTermMonths,
+            request.MaxLoanTermMonths);
 
         _repository.Add(fund);
-        await _auditLog.RecordAsync(guarantorId, "Fund.Created", "Fund", fund.Id, null, ct);
+        await _auditLog.RecordAsync(guarantorId, "Fund.Created", "Fund", fund.Id,
+            $"MinLoanTermMonths={fund.MinLoanTermMonths}, MaxLoanTermMonths={fund.MaxLoanTermMonths}", ct);
         await _repository.SaveChangesAsync(ct);
 
         return fund;

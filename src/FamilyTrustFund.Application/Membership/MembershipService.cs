@@ -144,6 +144,8 @@ public class MembershipService
         JoinCode = fund.JoinCode,
         ContributionMultiplier = fund.ContributionMultiplier,
         InterestRate = fund.InterestRate,
+        MinLoanTermMonths = fund.MinLoanTermMonths,
+        MaxLoanTermMonths = fund.MaxLoanTermMonths,
         HowItWorks = fund.HowItWorks,
         Status = member.Status,
         JoinedAtUtc = member.JoinedAtUtc,

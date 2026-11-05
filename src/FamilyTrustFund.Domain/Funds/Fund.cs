@@ -11,6 +11,9 @@ namespace FamilyTrustFund.Domain.Funds;
 public class Fund
 {
     public const decimal DefaultContributionMultiplier = 10m;
+    public const int DefaultMinLoanTermMonths = 1;
+    public const int DefaultMaxLoanTermMonths = 60;
+    public const int AbsoluteMaxLoanTermMonths = 120;
 
     public Guid Id { get; private set; }
     public Guid GuarantorId { get; private set; }
@@ -24,6 +27,12 @@ public class Fund
 
     /// <summary>Annual interest rate as a percentage (External funds only).</summary>
     public decimal? InterestRate { get; private set; }
+
+    /// <summary>Minimum loan term in months allowed by this fund.</summary>
+    public int MinLoanTermMonths { get; private set; } = DefaultMinLoanTermMonths;
+
+    /// <summary>Maximum loan term in months allowed by this fund.</summary>
+    public int MaxLoanTermMonths { get; private set; } = DefaultMaxLoanTermMonths;
 
     /// <summary>Guarantor-authored guidance shown to members of this fund.</summary>
     public string? HowItWorks { get; private set; }
@@ -56,7 +65,9 @@ public class Fund
         decimal committedCapital,
         string joinCode,
         decimal? contributionMultiplier = null,
-        decimal? interestRate = null)
+        decimal? interestRate = null,
+        int? minLoanTermMonths = null,
+        int? maxLoanTermMonths = null)
     {
         var fund = new Fund
         {
@@ -69,6 +80,9 @@ public class Fund
         fund.SetJoinCode(joinCode);
         fund.SetCommittedCapital(committedCapital);
         fund.SetTypeConfiguration(type, contributionMultiplier, interestRate);
+        fund.SetLoanTermRange(
+            minLoanTermMonths ?? DefaultMinLoanTermMonths,
+            maxLoanTermMonths ?? DefaultMaxLoanTermMonths);
         return fund;
     }
 
@@ -102,6 +116,33 @@ public class Fund
         }
 
         CommittedCapital = committedCapital;
+        Touch();
+    }
+
+    /// <summary>
+    /// Sets the loan term range allowed for this fund. The Guarantor configures
+    /// this at fund creation; the range bounds every member request and every
+    /// Guarantor approval.
+    /// </summary>
+    public void SetLoanTermRange(int minTermMonths, int maxTermMonths)
+    {
+        if (minTermMonths < 1)
+        {
+            throw new InvalidFundException("Minimum loan term must be at least 1 month.");
+        }
+
+        if (maxTermMonths < minTermMonths)
+        {
+            throw new InvalidFundException("Maximum loan term cannot be less than the minimum loan term.");
+        }
+
+        if (maxTermMonths > AbsoluteMaxLoanTermMonths)
+        {
+            throw new InvalidFundException($"Maximum loan term cannot exceed {AbsoluteMaxLoanTermMonths} months.");
+        }
+
+        MinLoanTermMonths = minTermMonths;
+        MaxLoanTermMonths = maxTermMonths;
         Touch();
     }
 

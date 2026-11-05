@@ -12,6 +12,8 @@ export interface Fund {
   committedCapital: number
   contributionMultiplier: number
   interestRate: number | null
+  minLoanTermMonths: number
+  maxLoanTermMonths: number
   howItWorks: string | null
   repaymentBankName: string | null
   repaymentAccountNumber: string | null
@@ -44,6 +46,8 @@ export interface CreateFundRequest {
   committedCapital: number
   contributionMultiplier?: number
   interestRate?: number | null
+  minLoanTermMonths?: number
+  maxLoanTermMonths?: number
 }
 
 export function useFunds() {

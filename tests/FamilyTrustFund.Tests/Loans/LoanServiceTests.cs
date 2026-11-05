@@ -33,14 +33,18 @@ public class LoanServiceTests
 
     private static Fund CreateFamilyFund(
         Guid? guarantorId = null,
-        decimal committedCapital = 1_000_000m)
+        decimal committedCapital = 1_000_000m,
+        int? minLoanTermMonths = null,
+        int? maxLoanTermMonths = null)
     {
         return Fund.Create(
             guarantorId ?? GuarantorId,
             "Aunties Fund",
             FundType.Family,
             committedCapital,
-            "ABCD1234");
+            "ABCD1234",
+            minLoanTermMonths: minLoanTermMonths,
+            maxLoanTermMonths: maxLoanTermMonths);
     }
 
     private static Fund CreateExternalFund(
@@ -378,10 +382,11 @@ public class LoanServiceTests
     [Fact]
     public async Task ApproveLoan_sets_approved_terms()
     {
-        var (funds, members, loans, service) = Setup();
+        var (funds, members, loans, contributions, service) = SetupExposeContributions();
         var fund = CreateFamilyFund();
         funds.Funds.Add(fund);
         AddActiveMembership(members, fund.Id, MemberId);
+        contributions.ConfirmedFundCredits[(MemberId, fund.Id)] = 200_000m;
 
         // Create a pending loan.
         var loan = Loan.Request(fund.Id, MemberId, 500_000m, RepaymentFrequency.Monthly, 0m, LoanFundingSource.GuarantorCapital);
@@ -392,6 +397,7 @@ public class LoanServiceTests
             LoanId = loan.Id,
             ApprovedAmount = 500_000m,
             ApprovedFrequency = RepaymentFrequency.Biweekly,
+            ConfirmedWithMember = true,
         });
 
         result.Status.Should().Be(LoanStatus.Approved);
@@ -695,12 +701,13 @@ public class LoanServiceTests
     [Fact]
     public async Task ApproveLoan_records_audit_event()
     {
-        var (funds, members, loans, _) = Setup();
+        var (funds, members, loans, contributions, _) = SetupExposeContributions();
         var audit = new FakeAuditLog();
-        var service = new LoanService(loans, funds, members, new FakeContributionRepository(), audit);
+        var service = new LoanService(loans, funds, members, contributions, audit);
         var fund = CreateFamilyFund();
         funds.Funds.Add(fund);
         AddActiveMembership(members, fund.Id, MemberId);
+        contributions.ConfirmedFundCredits[(MemberId, fund.Id)] = 200_000m;
 
         var loan = Loan.Request(fund.Id, MemberId, 100m, RepaymentFrequency.Weekly, 0m, LoanFundingSource.GuarantorCapital);
         loans.Loans.Add(loan);
@@ -837,5 +844,365 @@ public class LoanServiceTests
     {
         var act = () => LoanService.CalculateTotalRepayable(100m, -5m);
         act.Should().Throw<InvalidLoanException>();
+    }
+
+    [Fact]
+    public async Task RequestLoan_captures_requested_term_and_instalments()
+    {
+        var (funds, members, loans, contributions, service) = SetupExposeContributions();
+        var fund = CreateFamilyFund();
+        funds.Funds.Add(fund);
+        AddActiveMembership(members, fund.Id, MemberId);
+        contributions.ConfirmedFundCredits[(MemberId, fund.Id)] = 200_000m;
+
+        var result = await service.RequestLoanAsync(MemberId, new RequestLoanRequest
+        {
+            FundId = fund.Id,
+            Amount = 24_000m,
+            Frequency = RepaymentFrequency.Weekly,
+            TermMonths = 6,
+            Instalments = 26,
+        });
+
+        result.RequestedTermMonths.Should().Be(6);
+        result.RequestedInstalments.Should().Be(26);
+        result.RequestedFrequency.Should().Be(RepaymentFrequency.Weekly);
+        loans.Loans.Should().ContainSingle(l => l.RequestedTermMonths == 6 && l.RequestedInstalments == 26);
+    }
+
+    [Fact]
+    public async Task RequestLoan_rejects_term_outside_fund_range()
+    {
+        var (funds, members, _, contributions, service) = SetupExposeContributions();
+        var fund = CreateFamilyFund(minLoanTermMonths: 3, maxLoanTermMonths: 12);
+        funds.Funds.Add(fund);
+        AddActiveMembership(members, fund.Id, MemberId);
+        contributions.ConfirmedFundCredits[(MemberId, fund.Id)] = 200_000m;
+
+        var act = async () => await service.RequestLoanAsync(MemberId, new RequestLoanRequest
+        {
+            FundId = fund.Id,
+            Amount = 10_000m,
+            Frequency = RepaymentFrequency.Monthly,
+            TermMonths = 2,
+            Instalments = 2,
+        });
+
+        await act.Should().ThrowAsync<InvalidLoanException>()
+            .WithMessage("*between 3 and 12 months*");
+    }
+
+    [Fact]
+    public async Task RequestLoan_rejects_instalment_count_mismatch()
+    {
+        var (funds, members, _, contributions, service) = SetupExposeContributions();
+        var fund = CreateFamilyFund();
+        funds.Funds.Add(fund);
+        AddActiveMembership(members, fund.Id, MemberId);
+        contributions.ConfirmedFundCredits[(MemberId, fund.Id)] = 200_000m;
+
+        var act = async () => await service.RequestLoanAsync(MemberId, new RequestLoanRequest
+        {
+            FundId = fund.Id,
+            Amount = 10_000m,
+            Frequency = RepaymentFrequency.Monthly,
+            TermMonths = 6,
+            Instalments = 5,
+        });
+
+        await act.Should().ThrowAsync<InvalidLoanException>()
+            .WithMessage("*exactly 6*");
+    }
+
+    [Fact]
+    public async Task RequestLoan_rejects_amount_above_family_entitlement()
+    {
+        var (funds, members, _, contributions, service) = SetupExposeContributions();
+        var fund = CreateFamilyFund();
+        funds.Funds.Add(fund);
+        AddActiveMembership(members, fund.Id, MemberId);
+        contributions.ConfirmedFundCredits[(MemberId, fund.Id)] = 1_000m;
+
+        var act = async () => await service.RequestLoanAsync(MemberId, new RequestLoanRequest
+        {
+            FundId = fund.Id,
+            Amount = 20_000m,
+            Frequency = RepaymentFrequency.Monthly,
+            TermMonths = 6,
+            Instalments = 6,
+        });
+
+        await act.Should().ThrowAsync<InvalidLoanException>()
+            .WithMessage("*borrowing entitlement*");
+    }
+
+    [Fact]
+    public async Task PreviewLoan_returns_server_calculated_breakdown()
+    {
+        var (funds, members, _, contributions, service) = SetupExposeContributions();
+        var fund = CreateFamilyFund();
+        funds.Funds.Add(fund);
+        AddActiveMembership(members, fund.Id, MemberId);
+        contributions.ConfirmedFundCredits[(MemberId, fund.Id)] = 200_000m;
+
+        var preview = await service.PreviewLoanAsync(MemberId, new LoanPreviewRequest
+        {
+            FundId = fund.Id,
+            Amount = 24_000m,
+            Frequency = RepaymentFrequency.Weekly,
+            TermMonths = 6,
+            Instalments = 26,
+        });
+
+        preview.IsValid.Should().BeTrue();
+        preview.Errors.Should().BeEmpty();
+        preview.TotalRepayable.Should().Be(24_000m);
+        preview.InterestAmount.Should().Be(0m);
+        preview.Instalments.Should().Be(26);
+        preview.InstalmentAmount.Should().Be(923.08m);
+        preview.FinalInstalmentAmount.Should().Be(923.00m);
+        preview.FirstDueDateUtc.Should().NotBeNull();
+        preview.FinalDueDateUtc.Should().NotBeNull();
+        preview.AvailableLendingCapacity.Should().Be(1_000_000m);
+        preview.FamilyBorrowingEntitlement.Should().Be(2_000_000m);
+        preview.MinTermMonths.Should().Be(1);
+        preview.MaxTermMonths.Should().Be(60);
+    }
+
+    [Fact]
+    public async Task PreviewLoan_reports_invalid_instalment_count()
+    {
+        var (funds, members, _, contributions, service) = SetupExposeContributions();
+        var fund = CreateFamilyFund();
+        funds.Funds.Add(fund);
+        AddActiveMembership(members, fund.Id, MemberId);
+        contributions.ConfirmedFundCredits[(MemberId, fund.Id)] = 200_000m;
+
+        var preview = await service.PreviewLoanAsync(MemberId, new LoanPreviewRequest
+        {
+            FundId = fund.Id,
+            Amount = 24_000m,
+            Frequency = RepaymentFrequency.Monthly,
+            TermMonths = 6,
+            Instalments = 5,
+        });
+
+        preview.IsValid.Should().BeFalse();
+        preview.Errors.Should().ContainSingle(e => e.Contains("exactly 6"));
+    }
+
+    [Fact]
+    public async Task PreviewLoan_reports_absurd_instalment_count_without_building_a_schedule()
+    {
+        var (funds, members, _, contributions, service) = SetupExposeContributions();
+        var fund = CreateFamilyFund();
+        funds.Funds.Add(fund);
+        AddActiveMembership(members, fund.Id, MemberId);
+        contributions.ConfirmedFundCredits[(MemberId, fund.Id)] = 200_000m;
+
+        var preview = await service.PreviewLoanAsync(MemberId, new LoanPreviewRequest
+        {
+            FundId = fund.Id,
+            Amount = 24_000m,
+            Frequency = RepaymentFrequency.Monthly,
+            TermMonths = 6,
+            Instalments = 1_000_000,
+        });
+
+        preview.IsValid.Should().BeFalse();
+        preview.Errors.Should().Contain(e => e.Contains("exactly 6"));
+        preview.InstalmentAmount.Should().Be(0m);
+        preview.FirstDueDateUtc.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task PreviewLoan_reports_entitlement_error()
+    {
+        var (funds, members, _, contributions, service) = SetupExposeContributions();
+        var fund = CreateFamilyFund();
+        funds.Funds.Add(fund);
+        AddActiveMembership(members, fund.Id, MemberId);
+        contributions.ConfirmedFundCredits[(MemberId, fund.Id)] = 1_000m;
+
+        var preview = await service.PreviewLoanAsync(MemberId, new LoanPreviewRequest
+        {
+            FundId = fund.Id,
+            Amount = 20_000m,
+            Frequency = RepaymentFrequency.Monthly,
+            TermMonths = 6,
+            Instalments = 6,
+        });
+
+        preview.IsValid.Should().BeFalse();
+        preview.Errors.Should().Contain(e => e.Contains("borrowing entitlement"));
+    }
+
+    [Fact]
+    public async Task ApproveLoan_rejects_changed_terms_without_acknowledgement()
+    {
+        var (funds, members, loans, contributions, service) = SetupExposeContributions();
+        var fund = CreateFamilyFund();
+        funds.Funds.Add(fund);
+        AddActiveMembership(members, fund.Id, MemberId);
+        contributions.ConfirmedFundCredits[(MemberId, fund.Id)] = 200_000m;
+
+        var loan = Loan.Request(
+            fund.Id, MemberId, 120_000m, RepaymentFrequency.Monthly, 0m,
+            LoanFundingSource.GuarantorCapital, termMonths: 6, instalments: 6);
+        loans.Loans.Add(loan);
+
+        var act = async () => await service.ApproveLoanAsync(GuarantorId, new ApproveLoanRequest
+        {
+            LoanId = loan.Id,
+            ApprovedAmount = 120_000m,
+            ApprovedFrequency = RepaymentFrequency.Monthly,
+            ApprovedTermMonths = 12,
+            ApprovedInstalments = 12,
+            ConfirmedWithMember = false,
+        });
+
+        await act.Should().ThrowAsync<InvalidLoanException>()
+            .WithMessage("*Confirm the new arrangement*");
+    }
+
+    [Fact]
+    public async Task ApproveLoan_with_acknowledgement_freezes_approved_terms()
+    {
+        var (funds, members, loans, contributions, service) = SetupExposeContributions();
+        var fund = CreateFamilyFund();
+        funds.Funds.Add(fund);
+        AddActiveMembership(members, fund.Id, MemberId);
+        contributions.ConfirmedFundCredits[(MemberId, fund.Id)] = 200_000m;
+
+        var loan = Loan.Request(
+            fund.Id, MemberId, 120_000m, RepaymentFrequency.Monthly, 0m,
+            LoanFundingSource.GuarantorCapital, termMonths: 6, instalments: 6);
+        loans.Loans.Add(loan);
+
+        var result = await service.ApproveLoanAsync(GuarantorId, new ApproveLoanRequest
+        {
+            LoanId = loan.Id,
+            ApprovedAmount = 120_000m,
+            ApprovedFrequency = RepaymentFrequency.Monthly,
+            ApprovedTermMonths = 12,
+            ApprovedInstalments = 12,
+            ConfirmedWithMember = true,
+        });
+
+        result.Status.Should().Be(LoanStatus.Approved);
+        result.ApprovedTermMonths.Should().Be(12);
+        result.RepaymentTerm.Should().Be(12);
+        result.RequestedTermMonths.Should().Be(6);
+    }
+
+    [Fact]
+    public async Task ApproveLoan_rejects_term_outside_fund_range()
+    {
+        var (funds, members, loans, contributions, service) = SetupExposeContributions();
+        var fund = CreateFamilyFund(minLoanTermMonths: 3, maxLoanTermMonths: 12);
+        funds.Funds.Add(fund);
+        AddActiveMembership(members, fund.Id, MemberId);
+        contributions.ConfirmedFundCredits[(MemberId, fund.Id)] = 200_000m;
+
+        var loan = Loan.Request(
+            fund.Id, MemberId, 24_000m, RepaymentFrequency.Monthly, 0m,
+            LoanFundingSource.GuarantorCapital, termMonths: 6, instalments: 6);
+        loans.Loans.Add(loan);
+
+        var act = async () => await service.ApproveLoanAsync(GuarantorId, new ApproveLoanRequest
+        {
+            LoanId = loan.Id,
+            ApprovedAmount = 24_000m,
+            ApprovedFrequency = RepaymentFrequency.Monthly,
+            ApprovedTermMonths = 24,
+            ApprovedInstalments = 24,
+            ConfirmedWithMember = true,
+        });
+
+        await act.Should().ThrowAsync<InvalidLoanException>()
+            .WithMessage("*between 3 and 12 months*");
+    }
+
+    [Fact]
+    public async Task ApproveLoan_rejects_amount_above_family_entitlement()
+    {
+        var (funds, members, loans, contributions, service) = SetupExposeContributions();
+        var fund = CreateFamilyFund();
+        funds.Funds.Add(fund);
+        AddActiveMembership(members, fund.Id, MemberId);
+        contributions.ConfirmedFundCredits[(MemberId, fund.Id)] = 1_000m;
+
+        var loan = Loan.Request(
+            fund.Id, MemberId, 24_000m, RepaymentFrequency.Monthly, 0m,
+            LoanFundingSource.GuarantorCapital, termMonths: 6, instalments: 6);
+        loans.Loans.Add(loan);
+
+        var act = async () => await service.ApproveLoanAsync(GuarantorId, new ApproveLoanRequest
+        {
+            LoanId = loan.Id,
+            ApprovedAmount = 24_000m,
+            ApprovedFrequency = RepaymentFrequency.Monthly,
+            ApprovedTermMonths = 6,
+            ApprovedInstalments = 6,
+        });
+
+        await act.Should().ThrowAsync<InvalidLoanException>()
+            .WithMessage("*borrowing entitlement*");
+    }
+
+    [Fact]
+    public async Task PreviewApproval_reports_changed_terms()
+    {
+        var (funds, members, loans, contributions, service) = SetupExposeContributions();
+        var fund = CreateFamilyFund();
+        funds.Funds.Add(fund);
+        AddActiveMembership(members, fund.Id, MemberId);
+        contributions.ConfirmedFundCredits[(MemberId, fund.Id)] = 200_000m;
+
+        var loan = Loan.Request(
+            fund.Id, MemberId, 24_000m, RepaymentFrequency.Weekly, 0m,
+            LoanFundingSource.GuarantorCapital, termMonths: 6, instalments: 26);
+        loans.Loans.Add(loan);
+
+        var preview = await service.PreviewApprovalAsync(GuarantorId, new GuarantorLoanPreviewRequest
+        {
+            LoanId = loan.Id,
+            ApprovedAmount = 30_000m,
+            ApprovedFrequency = RepaymentFrequency.Weekly,
+            ApprovedTermMonths = 6,
+            ApprovedInstalments = 26,
+        });
+
+        preview.TermsChanged.Should().BeTrue();
+        preview.Changes.Should().ContainSingle(c => c.Field == "Amount");
+        preview.Preview.IsValid.Should().BeTrue();
+        preview.Preview.Amount.Should().Be(30_000m);
+    }
+
+    [Fact]
+    public async Task PreviewApproval_reports_no_change_when_terms_match_request()
+    {
+        var (funds, members, loans, contributions, service) = SetupExposeContributions();
+        var fund = CreateFamilyFund();
+        funds.Funds.Add(fund);
+        AddActiveMembership(members, fund.Id, MemberId);
+        contributions.ConfirmedFundCredits[(MemberId, fund.Id)] = 200_000m;
+
+        var loan = Loan.Request(
+            fund.Id, MemberId, 24_000m, RepaymentFrequency.Weekly, 0m,
+            LoanFundingSource.GuarantorCapital, termMonths: 6, instalments: 26);
+        loans.Loans.Add(loan);
+
+        var preview = await service.PreviewApprovalAsync(GuarantorId, new GuarantorLoanPreviewRequest
+        {
+            LoanId = loan.Id,
+            ApprovedAmount = 24_000m,
+            ApprovedFrequency = RepaymentFrequency.Weekly,
+            ApprovedTermMonths = 6,
+            ApprovedInstalments = 26,
+        });
+
+        preview.TermsChanged.Should().BeFalse();
+        preview.Changes.Should().BeEmpty();
     }
 }

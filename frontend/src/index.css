@@ -734,6 +734,105 @@ code {
 }
 
 /* ------------------------------------------------------------
+   Loan repayment preview
+   ------------------------------------------------------------ */
+
+.repayment-preview {
+  margin: 16px 0;
+  padding: 16px;
+  background: var(--muted-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.repayment-preview h3 {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.repayment-preview p {
+  margin: 0 0 6px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.repayment-preview p:last-child {
+  margin-bottom: 0;
+}
+
+.preview-errors {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--danger-fg);
+  font-size: 13px;
+}
+
+.preview-errors li {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 3px 0;
+  line-height: 1.45;
+}
+
+.preview-errors li svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.term-change-warning {
+  margin: 16px 0;
+  padding: 16px;
+  background: var(--warning-bg);
+  border: 1px solid color-mix(in srgb, var(--warning) 40%, transparent);
+  border-radius: var(--radius);
+}
+
+.term-change-warning h3 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--warning-fg);
+  margin-bottom: 8px;
+}
+
+.term-change-warning p {
+  margin: 0 0 8px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.term-change-warning ul {
+  margin: 0 0 12px;
+  padding-left: 20px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.checkbox-row input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  flex-shrink: 0;
+  accent-color: var(--primary);
+  cursor: pointer;
+}
+
+/* ------------------------------------------------------------
    Tables
    ------------------------------------------------------------ */
 

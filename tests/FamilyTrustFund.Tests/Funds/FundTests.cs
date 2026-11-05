@@ -140,4 +140,37 @@ public class FundTests
         var codes = Enumerable.Range(0, 100).Select(_ => JoinCodeGenerator.Generate()).ToHashSet();
         codes.Count.Should().Be(100);
     }
+
+    [Fact]
+    public void Create_applies_default_loan_term_range()
+    {
+        var fund = Fund.Create(Guarantor, "F", FundType.Family, 100, "ABCD1234");
+
+        fund.MinLoanTermMonths.Should().Be(Fund.DefaultMinLoanTermMonths);
+        fund.MaxLoanTermMonths.Should().Be(Fund.DefaultMaxLoanTermMonths);
+    }
+
+    [Fact]
+    public void Create_accepts_custom_loan_term_range()
+    {
+        var fund = Fund.Create(
+            Guarantor, "F", FundType.Family, 100, "ABCD1234",
+            minLoanTermMonths: 3, maxLoanTermMonths: 12);
+
+        fund.MinLoanTermMonths.Should().Be(3);
+        fund.MaxLoanTermMonths.Should().Be(12);
+    }
+
+    [Theory]
+    [InlineData(0, 12)]
+    [InlineData(12, 6)]
+    [InlineData(1, 121)]
+    public void Create_rejects_invalid_loan_term_range(int min, int max)
+    {
+        var act = () => Fund.Create(
+            Guarantor, "F", FundType.Family, 100, "ABCD1234",
+            minLoanTermMonths: min, maxLoanTermMonths: max);
+
+        act.Should().Throw<InvalidFundException>();
+    }
 }

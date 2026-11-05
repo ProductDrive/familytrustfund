@@ -30,6 +30,9 @@ export interface Loan {
   interestRate: number
   requestedFrequency: RepaymentFrequency
   approvedFrequency: RepaymentFrequency | null
+  requestedTermMonths: number | null
+  requestedInstalments: number | null
+  approvedTermMonths: number | null
   repaymentTerm: number
   status: LoanStatus
   fundingSource: LoanFundingSource
@@ -60,6 +63,8 @@ export interface RequestLoanInput {
   fundId: string
   amount: number
   frequency: RepaymentFrequency
+  termMonths: number
+  instalments: number
   purpose?: string | null
 }
 
@@ -67,7 +72,80 @@ export interface ApproveLoanInput {
   loanId: string
   approvedAmount: number
   approvedFrequency: RepaymentFrequency
-  repaymentTerm?: number
+  approvedTermMonths: number
+  approvedInstalments: number
+  confirmedWithMember: boolean
+}
+
+export interface LoanPreviewInput {
+  fundId: string
+  amount: number
+  frequency: RepaymentFrequency
+  termMonths: number
+  instalments: number
+}
+
+export interface LoanPreview {
+  fundId: string
+  fundType: FundType
+  amount: number
+  frequency: RepaymentFrequency
+  termMonths: number
+  instalments: number
+  interestRate: number
+  totalRepayable: number
+  interestAmount: number
+  instalmentAmount: number
+  finalInstalmentAmount: number
+  firstDueDateUtc: string | null
+  finalDueDateUtc: string | null
+  committedCapital: number
+  activeDisbursedLoans: number
+  availableLendingCapacity: number
+  familyBorrowingEntitlement: number | null
+  fundCredit: number | null
+  minTermMonths: number
+  maxTermMonths: number
+  isValid: boolean
+  errors: string[]
+}
+
+export interface GuarantorLoanPreviewInput {
+  loanId: string
+  approvedAmount: number
+  approvedFrequency: RepaymentFrequency
+  approvedTermMonths: number
+  approvedInstalments: number
+}
+
+export interface LoanTermChange {
+  field: string
+  requested: string
+  approved: string
+}
+
+export interface GuarantorLoanPreview {
+  preview: LoanPreview
+  termsChanged: boolean
+  changes: LoanTermChange[]
+}
+
+/**
+ * UI hint only. The server validates the term/instalment combination via
+ * LoanTermRules and remains authoritative (AGENTS §7, §18.13).
+ */
+export function suggestedInstalments(
+  termMonths: number,
+  frequency: RepaymentFrequency,
+): number {
+  if (!Number.isFinite(termMonths) || termMonths <= 0) return 0
+  const count =
+    frequency === 'Weekly'
+      ? Math.round((termMonths * 52) / 12)
+      : frequency === 'Biweekly'
+        ? Math.round((termMonths * 26) / 12)
+        : termMonths
+  return Math.max(1, count)
 }
 
 export interface RejectLoanInput {
@@ -89,6 +167,22 @@ export function useLendingCapacity(fundId: string | null) {
     queryKey: ['loans', 'lending-capacity', fundId],
     queryFn: () => api.get<LendingCapacity>(`/loans/lending-capacity/${fundId}`),
     enabled: !!fundId,
+  })
+}
+
+export function useLoanPreview(input: LoanPreviewInput | null) {
+  return useQuery({
+    queryKey: ['loans', 'preview', input],
+    queryFn: () => api.post<LoanPreview>('/loans/preview', input),
+    enabled: !!input,
+  })
+}
+
+export function useGuarantorLoanPreview(input: GuarantorLoanPreviewInput | null) {
+  return useQuery({
+    queryKey: ['guarantor', 'loans', 'preview', input],
+    queryFn: () => api.post<GuarantorLoanPreview>('/guarantor/loans/preview', input),
+    enabled: !!input,
   })
 }
 

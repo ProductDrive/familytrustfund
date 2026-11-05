@@ -12,5 +12,16 @@ public sealed class CreateFundRequest
     public decimal CommittedCapital { get; init; }
     public decimal? ContributionMultiplier { get; init; }
     public decimal? InterestRate { get; init; }
+
+    /// <summary>
+    /// Minimum loan term in months allowed by this fund. Defaults to 1.
+    /// </summary>
+    public int? MinLoanTermMonths { get; init; }
+
+    /// <summary>
+    /// Maximum loan term in months allowed by this fund. Defaults to 60.
+    /// </summary>
+    public int? MaxLoanTermMonths { get; init; }
+
     public string? JoinCode { get; init; }
 }

@@ -14,6 +14,8 @@ public sealed class FundDto
     public decimal CommittedCapital { get; init; }
     public decimal ContributionMultiplier { get; init; }
     public decimal? InterestRate { get; init; }
+    public int MinLoanTermMonths { get; init; }
+    public int MaxLoanTermMonths { get; init; }
     public string? HowItWorks { get; init; }
     public string? RepaymentBankName { get; init; }
     public string? RepaymentAccountNumber { get; init; }

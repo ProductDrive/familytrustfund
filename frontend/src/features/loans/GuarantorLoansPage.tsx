@@ -1,11 +1,13 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Check, X, BadgeCheck } from 'lucide-react'
+import { Check, X, BadgeCheck, AlertTriangle } from 'lucide-react'
 import {
   useGuarantorPendingLoans,
   useApproveLoan,
   useRejectLoan,
   useGuarantorCancelLoan,
+  useGuarantorLoanPreview,
+  suggestedInstalments,
 } from './loanApi'
 import { PageHeader } from '../../components/ui/PageHeader'
 import { Card } from '../../components/ui/Card'
@@ -14,29 +16,155 @@ import { Button } from '../../components/ui/Button'
 import { AmountInput } from '../../components/ui/AmountInput'
 import { EmptyState, SkeletonCard } from '../../components/ui/State'
 import { MoneyDisplay } from '../../lib/money'
-import { formatShortDateTime } from '../../lib/formatDate'
-import type { Loan, RepaymentFrequency } from './loanApi'
+import { formatShortDate, formatShortDateTime } from '../../lib/formatDate'
+import { useDebouncedValue } from '../../lib/useDebouncedValue'
+import type {
+  GuarantorLoanPreview,
+  Loan,
+  RepaymentFrequency,
+} from './loanApi'
 
 const FREQUENCIES = ['Weekly', 'Biweekly', 'Monthly'] as const
+
+const FREQUENCY_LABELS: Record<RepaymentFrequency, string> = {
+  Weekly: 'weekly',
+  Biweekly: 'every two weeks',
+  Monthly: 'monthly',
+}
+
+function ApprovalPreview({ preview }: { preview?: GuarantorLoanPreview }) {
+  if (!preview) return null
+  const plan = preview.preview
+
+  return (
+    <section className="repayment-preview" aria-live="polite">
+      <h3>Repayment plan</h3>
+      {plan.isValid ? (
+        <>
+          <p>
+            <strong>
+              {plan.instalments} {FREQUENCY_LABELS[plan.frequency]} payments
+            </strong>{' '}
+            of about <MoneyDisplay amount={plan.instalmentAmount} /> over{' '}
+            {plan.termMonths} month{plan.termMonths === 1 ? '' : 's'}.
+          </p>
+          {plan.finalInstalmentAmount !== plan.instalmentAmount && (
+            <p>
+              Final payment: <MoneyDisplay amount={plan.finalInstalmentAmount} />.
+            </p>
+          )}
+          {plan.fundType === 'External' ? (
+            <p>
+              Principal <MoneyDisplay amount={plan.amount} /> + interest{' '}
+              <MoneyDisplay amount={plan.interestAmount} /> = total repayable{' '}
+              <MoneyDisplay amount={plan.totalRepayable} />.
+            </p>
+          ) : (
+            <p>
+              Total repayable <MoneyDisplay amount={plan.totalRepayable} /> with no
+              interest.
+            </p>
+          )}
+          {plan.firstDueDateUtc && plan.finalDueDateUtc && (
+            <p className="muted">
+              First payment around {formatShortDate(plan.firstDueDateUtc)}, final
+              around {formatShortDate(plan.finalDueDateUtc)}. Dates are confirmed at
+              disbursement.
+            </p>
+          )}
+        </>
+      ) : (
+        <ul className="preview-errors">
+          {plan.errors.map((message) => (
+            <li key={message}>
+              <AlertTriangle size={14} aria-hidden /> {message}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  )
+}
 
 function ApproveForm({ loan, onDone }: { loan: Loan; onDone: () => void }) {
   const approve = useApproveLoan()
   const reject = useRejectLoan()
   const navigate = useNavigate()
+
+  const initialTerm = loan.requestedTermMonths ?? 6
+  const initialFrequency = loan.requestedFrequency
+  const initialInstalments =
+    loan.requestedInstalments ??
+    (loan.repaymentTerm > 0
+      ? loan.repaymentTerm
+      : suggestedInstalments(initialTerm, initialFrequency))
+
   const [amount, setAmount] = useState(String(loan.requestedAmount))
-  const [frequency, setFrequency] = useState<RepaymentFrequency>(
-    loan.requestedFrequency,
-  )
+  const [frequency, setFrequency] = useState<RepaymentFrequency>(initialFrequency)
+  const [termMonths, setTermMonths] = useState(String(initialTerm))
+  const [instalments, setInstalments] = useState(String(initialInstalments))
+  const [acknowledged, setAcknowledged] = useState(false)
   const [rejectReason, setRejectReason] = useState('')
   const [mode, setMode] = useState<'approve' | 'reject'>('approve')
+
+  const debouncedAmount = useDebouncedValue(amount)
+  const debouncedTerm = useDebouncedValue(termMonths)
+  const debouncedInstalments = useDebouncedValue(instalments)
+
+  const amountNumber = Number(debouncedAmount)
+  const termNumber = Number(debouncedTerm)
+  const instalmentsNumber = Number(debouncedInstalments)
+
+  const previewInput =
+    amountNumber > 0 && termNumber > 0 && instalmentsNumber > 0
+      ? {
+          loanId: loan.id,
+          approvedAmount: amountNumber,
+          approvedFrequency: frequency,
+          approvedTermMonths: termNumber,
+          approvedInstalments: instalmentsNumber,
+        }
+      : null
+
+  const preview = useGuarantorLoanPreview(previewInput)
+  const termsChanged = preview.data?.termsChanged ?? false
+  const previewStale =
+    amount !== debouncedAmount ||
+    termMonths !== debouncedTerm ||
+    instalments !== debouncedInstalments
+
+  function changeFrequency(next: RepaymentFrequency) {
+    setFrequency(next)
+    setAcknowledged(false)
+    const term = Number(termMonths)
+    if (term > 0) setInstalments(String(suggestedInstalments(term, next)))
+  }
+
+  function changeTerm(next: string) {
+    setTermMonths(next)
+    setAcknowledged(false)
+    const term = Number(next)
+    if (term > 0) setInstalments(String(suggestedInstalments(term, frequency)))
+  }
 
   function submit(e: React.FormEvent) {
     e.preventDefault()
     if (mode === 'approve') {
       const parsed = Number(amount)
-      if (!parsed || parsed <= 0) return
+      const term = Number(termMonths)
+      const count = Number(instalments)
+      if (!parsed || parsed <= 0 || term <= 0 || count <= 0) return
+      if (previewStale || !preview.data?.preview.isValid) return
+      if (preview.data.termsChanged && !acknowledged) return
       approve.mutate(
-        { loanId: loan.id, approvedAmount: parsed, approvedFrequency: frequency },
+        {
+          loanId: loan.id,
+          approvedAmount: parsed,
+          approvedFrequency: frequency,
+          approvedTermMonths: term,
+          approvedInstalments: count,
+          confirmedWithMember: acknowledged,
+        },
         {
           onSuccess: () => {
             onDone()
@@ -51,6 +179,13 @@ function ApproveForm({ loan, onDone }: { loan: Loan; onDone: () => void }) {
     }
   }
 
+  const canApprove =
+    !!preview.data?.preview.isValid &&
+    !preview.isFetching &&
+    !previewStale &&
+    !approve.isPending &&
+    (!termsChanged || acknowledged)
+
   return (
     <form onSubmit={submit}>
       {mode === 'approve' ? (
@@ -60,7 +195,10 @@ function ApproveForm({ loan, onDone }: { loan: Loan; onDone: () => void }) {
             <AmountInput
               id={`amount-${loan.id}`}
               value={amount}
-              onChange={setAmount}
+              onChange={(value) => {
+                setAmount(value)
+                setAcknowledged(false)
+              }}
               required
             />
             <p className="field-hint">
@@ -74,7 +212,7 @@ function ApproveForm({ loan, onDone }: { loan: Loan; onDone: () => void }) {
             <select
               id={`freq-${loan.id}`}
               value={frequency}
-              onChange={(e) => setFrequency(e.target.value as RepaymentFrequency)}
+              onChange={(e) => changeFrequency(e.target.value as RepaymentFrequency)}
             >
               {FREQUENCIES.map((f) => (
                 <option key={f} value={f}>
@@ -83,10 +221,80 @@ function ApproveForm({ loan, onDone }: { loan: Loan; onDone: () => void }) {
               ))}
             </select>
             <p className="field-hint">
-              You may adjust the repayment frequency at approval. Approved terms become the
-              loan&apos;s historical terms.
+              Requested: {loan.requestedFrequency}. You may adjust the repayment
+              frequency at approval.
             </p>
           </div>
+
+          <div
+            className="grid"
+            style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}
+          >
+            <div className="field">
+              <label htmlFor={`term-${loan.id}`}>Term (months)</label>
+              <input
+                id={`term-${loan.id}`}
+                type="number"
+                min={preview.data?.preview.minTermMonths ?? 1}
+                max={preview.data?.preview.maxTermMonths ?? 120}
+                value={termMonths}
+                onChange={(e) => changeTerm(e.target.value)}
+                required
+              />
+              <p className="field-hint">
+                Requested: {loan.requestedTermMonths ?? '—'} month(s).
+              </p>
+            </div>
+
+            <div className="field">
+              <label htmlFor={`instalments-${loan.id}`}>Number of instalments</label>
+              <input
+                id={`instalments-${loan.id}`}
+                type="number"
+                min={1}
+                value={instalments}
+                onChange={(e) => {
+                  setInstalments(e.target.value)
+                  setAcknowledged(false)
+                }}
+                required
+              />
+              <p className="field-hint">
+                Requested: {loan.requestedInstalments ?? '—'}.
+              </p>
+            </div>
+          </div>
+
+          {previewInput && <ApprovalPreview preview={preview.data} />}
+
+          {termsChanged && preview.data && (
+            <section className="term-change-warning" role="alert">
+              <h3>
+                <AlertTriangle size={16} aria-hidden /> These terms differ from the
+                member&apos;s request
+              </h3>
+              <p>
+                Confirm the new arrangement with the borrower before approving.
+                Approved terms become the loan&apos;s historical terms.
+              </p>
+              <ul>
+                {preview.data.changes.map((change) => (
+                  <li key={change.field}>
+                    <strong>{change.field}:</strong> {change.requested} →{' '}
+                    {change.approved}
+                  </li>
+                ))}
+              </ul>
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={acknowledged}
+                  onChange={(e) => setAcknowledged(e.target.checked)}
+                />
+                I have confirmed the new arrangement with the borrower.
+              </label>
+            </section>
+          )}
         </>
       ) : (
         <div className="field">
@@ -111,7 +319,11 @@ function ApproveForm({ loan, onDone }: { loan: Loan; onDone: () => void }) {
         <Button
           type="submit"
           variant={mode === 'approve' ? 'primary' : 'danger'}
-          disabled={approve.isPending || reject.isPending}
+          disabled={
+            approve.isPending ||
+            reject.isPending ||
+            (mode === 'approve' && !canApprove)
+          }
         >
           {mode === 'approve'
             ? approve.isPending
@@ -185,6 +397,17 @@ export function GuarantorLoansPage() {
                   <li>
                     <span className="property-label">Frequency</span>
                     <span className="property-value">{l.requestedFrequency}</span>
+                  </li>
+                  <li>
+                    <span className="property-label">Term</span>
+                    <span className="property-value">
+                      {l.requestedTermMonths != null
+                        ? `${l.requestedTermMonths} month(s) · `
+                        : ''}
+                      {l.requestedInstalments != null
+                        ? `${l.requestedInstalments} instalments`
+                        : 'Not specified'}
+                    </span>
                   </li>
                   <li>
                     <span className="property-label">Status</span>

@@ -1,9 +1,15 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { HandCoins, CircleDollarSign, X } from 'lucide-react'
+import { HandCoins, CircleDollarSign, X, AlertTriangle } from 'lucide-react'
 import { useMyMemberships } from '../membership/membershipApi'
-import { useMyLoans, useRequestLoan, useCancelLoan } from './loanApi'
-import type { Loan } from './loanApi'
+import {
+  useMyLoans,
+  useRequestLoan,
+  useCancelLoan,
+  useLoanPreview,
+  suggestedInstalments,
+} from './loanApi'
+import type { Loan, LoanPreview, RepaymentFrequency } from './loanApi'
 import { useMyLoanDisbursement } from '../payments/paymentApi'
 import { MemberBankDetails } from '../payments/MemberBankDetails'
 import { PageHeader } from '../../components/ui/PageHeader'
@@ -14,8 +20,15 @@ import { AmountInput } from '../../components/ui/AmountInput'
 import { EmptyState, SkeletonCard } from '../../components/ui/State'
 import { MoneyDisplay } from '../../lib/money'
 import { formatShortDate } from '../../lib/formatDate'
+import { useDebouncedValue } from '../../lib/useDebouncedValue'
 
 const FREQUENCIES = ['Weekly', 'Biweekly', 'Monthly'] as const
+
+const FREQUENCY_LABELS: Record<RepaymentFrequency, string> = {
+  Weekly: 'weekly',
+  Biweekly: 'every two weeks',
+  Monthly: 'monthly',
+}
 
 function DisbursementCell({ loanId }: { loanId: string }) {
   const { data: disbursement, isLoading } = useMyLoanDisbursement(loanId)
@@ -47,6 +60,78 @@ function CancelLoanButton({ loan }: { loan: Loan }) {
   )
 }
 
+function RepaymentSummary({
+  preview,
+  isLoading,
+}: {
+  preview?: LoanPreview
+  isLoading: boolean
+}) {
+  if (isLoading && !preview) {
+    return <p className="muted">Calculating your repayment plan…</p>
+  }
+  if (!preview) return null
+
+  return (
+    <section className="repayment-preview" aria-live="polite">
+      <h3>Your repayment plan</h3>
+      {preview.isValid ? (
+        <>
+          <p>
+            You will make{' '}
+            <strong>
+              {preview.instalments} {FREQUENCY_LABELS[preview.frequency]} payments
+            </strong>{' '}
+            of about <MoneyDisplay amount={preview.instalmentAmount} /> over{' '}
+            {preview.termMonths} month{preview.termMonths === 1 ? '' : 's'}.
+          </p>
+          {preview.finalInstalmentAmount !== preview.instalmentAmount && (
+            <p>
+              Your final payment will be{' '}
+              <MoneyDisplay amount={preview.finalInstalmentAmount} />.
+            </p>
+          )}
+          {preview.fundType === 'External' ? (
+            <p>
+              Principal <MoneyDisplay amount={preview.amount} /> + interest{' '}
+              <MoneyDisplay amount={preview.interestAmount} /> = total repayable{' '}
+              <MoneyDisplay amount={preview.totalRepayable} />.
+            </p>
+          ) : (
+            <p>
+              Total repayable <MoneyDisplay amount={preview.totalRepayable} /> with
+              no interest.
+            </p>
+          )}
+          {preview.firstDueDateUtc && preview.finalDueDateUtc && (
+            <p className="muted">
+              First payment around {formatShortDate(preview.firstDueDateUtc)}, final
+              around {formatShortDate(preview.finalDueDateUtc)}. Dates are confirmed
+              when the loan is disbursed.
+            </p>
+          )}
+          {preview.familyBorrowingEntitlement != null && (
+            <p className="muted">
+              Borrowing entitlement:{' '}
+              <MoneyDisplay amount={preview.familyBorrowingEntitlement} /> · Available
+              lending capacity:{' '}
+              <MoneyDisplay amount={preview.availableLendingCapacity} />
+            </p>
+          )}
+        </>
+      ) : (
+        <ul className="preview-errors">
+          {preview.errors.map((message) => (
+            <li key={message}>
+              <AlertTriangle size={14} aria-hidden /> {message}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  )
+}
+
 function LoanRequestForm({ onDone }: { onDone: () => void }) {
   const requestLoan = useRequestLoan()
   const { data: memberships } = useMyMemberships()
@@ -54,29 +139,82 @@ function LoanRequestForm({ onDone }: { onDone: () => void }) {
 
   const [fundId, setFundId] = useState('')
   const [amount, setAmount] = useState('')
-  const [frequency, setFrequency] = useState<string>('Monthly')
+  const [frequency, setFrequency] = useState<RepaymentFrequency>('Monthly')
+  const [termMonths, setTermMonths] = useState('6')
+  const [instalments, setInstalments] = useState('6')
   const [purpose, setPurpose] = useState('')
+
+  const selectedMembership = activeMemberships.find((m) => m.fundId === fundId)
+
+  const debouncedAmount = useDebouncedValue(amount)
+  const debouncedTerm = useDebouncedValue(termMonths)
+  const debouncedInstalments = useDebouncedValue(instalments)
+
+  const amountNumber = Number(debouncedAmount)
+  const termNumber = Number(debouncedTerm)
+  const instalmentsNumber = Number(debouncedInstalments)
+
+  const previewInput =
+    fundId && amountNumber > 0 && termNumber > 0 && instalmentsNumber > 0
+      ? {
+          fundId,
+          amount: amountNumber,
+          frequency,
+          termMonths: termNumber,
+          instalments: instalmentsNumber,
+        }
+      : null
+
+  const preview = useLoanPreview(previewInput)
+  const previewStale =
+    amount !== debouncedAmount ||
+    termMonths !== debouncedTerm ||
+    instalments !== debouncedInstalments
+
+  function changeFrequency(next: RepaymentFrequency) {
+    setFrequency(next)
+    const term = Number(termMonths)
+    if (term > 0) setInstalments(String(suggestedInstalments(term, next)))
+  }
+
+  function changeTerm(next: string) {
+    setTermMonths(next)
+    const term = Number(next)
+    if (term > 0) setInstalments(String(suggestedInstalments(term, frequency)))
+  }
 
   function submit(e: React.FormEvent) {
     e.preventDefault()
     const parsed = Number(amount)
-    if (!fundId || !parsed || parsed <= 0) return
+    const term = Number(termMonths)
+    const count = Number(instalments)
+    if (!fundId || !parsed || parsed <= 0 || term <= 0 || count <= 0) return
+    if (previewStale || !preview.data?.isValid) return
     requestLoan.mutate(
       {
         fundId,
         amount: parsed,
-        frequency: frequency as 'Weekly' | 'Biweekly' | 'Monthly',
+        frequency,
+        termMonths: term,
+        instalments: count,
         purpose: purpose.trim() || null,
       },
       { onSuccess: onDone },
     )
   }
 
+  const canSubmit =
+    activeMemberships.length > 0 &&
+    !!preview.data?.isValid &&
+    !preview.isFetching &&
+    !previewStale &&
+    !requestLoan.isPending
+
   return (
     <Card title="Request a loan">
       <p className="muted">
-        You can request a loan from any fund you have a membership in. Repayment
-        frequency is finalised at approval.
+        Choose how much you need, how often you can repay, and how long you want to
+        take. The repayment plan updates as you adjust the form.
       </p>
       <form onSubmit={submit}>
         <div className="field">
@@ -111,7 +249,7 @@ function LoanRequestForm({ onDone }: { onDone: () => void }) {
             required
           />
           <p className="field-hint">
-            The Guarantor may approve a lower amount than requested.
+            The Guarantor may approve a different amount at approval.
           </p>
         </div>
 
@@ -120,7 +258,7 @@ function LoanRequestForm({ onDone }: { onDone: () => void }) {
           <select
             id="loan-frequency"
             value={frequency}
-            onChange={(e) => setFrequency(e.target.value)}
+            onChange={(e) => changeFrequency(e.target.value as RepaymentFrequency)}
           >
             {FREQUENCIES.map((f) => (
               <option key={f} value={f}>
@@ -128,6 +266,46 @@ function LoanRequestForm({ onDone }: { onDone: () => void }) {
               </option>
             ))}
           </select>
+        </div>
+
+        <div
+          className="grid"
+          style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}
+        >
+          <div className="field">
+            <label htmlFor="loan-term">Term (months)</label>
+            <input
+              id="loan-term"
+              type="number"
+              min={selectedMembership?.minLoanTermMonths ?? 1}
+              max={selectedMembership?.maxLoanTermMonths ?? 120}
+              value={termMonths}
+              onChange={(e) => changeTerm(e.target.value)}
+              required
+            />
+            {selectedMembership && (
+              <p className="field-hint">
+                This fund allows {selectedMembership.minLoanTermMonths}–
+                {selectedMembership.maxLoanTermMonths} months.
+              </p>
+            )}
+          </div>
+
+          <div className="field">
+            <label htmlFor="loan-instalments">Number of instalments</label>
+            <input
+              id="loan-instalments"
+              type="number"
+              min={1}
+              value={instalments}
+              onChange={(e) => setInstalments(e.target.value)}
+              required
+            />
+            <p className="field-hint">
+              Weekly and two-weekly terms allow one payment either side of the
+              calendar estimate.
+            </p>
+          </div>
         </div>
 
         <div className="field">
@@ -141,11 +319,18 @@ function LoanRequestForm({ onDone }: { onDone: () => void }) {
           />
         </div>
 
+        {previewInput && (
+          <RepaymentSummary
+            preview={preview.data}
+            isLoading={preview.isFetching}
+          />
+        )}
+
         {requestLoan.isError && (
           <p className="form-error">{(requestLoan.error as Error).message}</p>
         )}
 
-        <Button type="submit" disabled={requestLoan.isPending || activeMemberships.length === 0}>
+        <Button type="submit" disabled={!canSubmit}>
           {requestLoan.isPending ? 'Submitting…' : 'Submit loan request'}
         </Button>
       </form>
@@ -217,7 +402,19 @@ export function MemberLoansPage() {
                       </div>
                     )}
                   </td>
-                  <td>{l.approvedFrequency ?? l.requestedFrequency}</td>
+                  <td>
+                    {l.approvedFrequency ?? l.requestedFrequency}
+                    <div className="cell-secondary" style={{ fontSize: 11 }}>
+                      {(l.approvedTermMonths ?? l.requestedTermMonths) != null
+                        ? `${l.approvedTermMonths ?? l.requestedTermMonths} months · `
+                        : ''}
+                      {l.approvedTermMonths != null
+                        ? `${l.repaymentTerm} instalments`
+                        : l.requestedInstalments != null
+                          ? `${l.requestedInstalments} instalments`
+                          : ''}
+                    </div>
+                  </td>
                   <td>
                     <StatusBadge status={l.status} withDot />
                   </td>

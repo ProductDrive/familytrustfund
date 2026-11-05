@@ -41,6 +41,32 @@ public static class LoanEndpoints
             }
         });
 
+        // Preview a loan request without creating it (Member). Returns the
+        // server-calculated repayment breakdown plus validation errors.
+        memberGroup.MapPost("/preview", async (
+            HttpContext http,
+            UserManager<ApplicationUser> userManager,
+            LoanService loanService,
+            [FromBody] LoanPreviewRequest request,
+            CancellationToken ct) =>
+        {
+            var userId = UserId(http, userManager);
+            if (userId is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            try
+            {
+                var preview = await loanService.PreviewLoanAsync(userId.Value, request, ct);
+                return Results.Ok(preview);
+            }
+            catch (InvalidLoanException ex)
+            {
+                return Results.BadRequest(new { message = ex.Message });
+            }
+        });
+
         // View own loans (Member).
         memberGroup.MapGet("/mine", async (
             HttpContext http,
@@ -174,6 +200,32 @@ public static class LoanEndpoints
 
             var loans = await loanService.GetLoansByFundAsync(fundId, ct);
             return Results.Ok(loans);
+        });
+
+        // Preview approval terms against the member's request (Guarantor).
+        // Returns the repayment breakdown and the list of changed terms.
+        guarantorGroup.MapPost("/preview", async (
+            HttpContext http,
+            UserManager<ApplicationUser> userManager,
+            LoanService loanService,
+            [FromBody] GuarantorLoanPreviewRequest request,
+            CancellationToken ct) =>
+        {
+            var userId = UserId(http, userManager);
+            if (userId is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            try
+            {
+                var preview = await loanService.PreviewApprovalAsync(userId.Value, request, ct);
+                return Results.Ok(preview);
+            }
+            catch (InvalidLoanException ex)
+            {
+                return Results.BadRequest(new { message = ex.Message });
+            }
         });
 
         // Approve a loan (Guarantor).

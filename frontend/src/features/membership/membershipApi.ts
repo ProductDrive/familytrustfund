@@ -12,6 +12,8 @@ export interface Membership {
   joinCode: string
   contributionMultiplier: number
   interestRate: number | null
+  minLoanTermMonths: number
+  maxLoanTermMonths: number
   howItWorks: string | null
   status: MemberStatus
   joinedAtUtc: string

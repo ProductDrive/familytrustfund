@@ -42,6 +42,14 @@ public class FundConfiguration : IEntityTypeConfiguration<Fund>
         builder.Property(f => f.InterestRate)
             .HasPrecision(18, 6);
 
+        builder.Property(f => f.MinLoanTermMonths)
+            .IsRequired()
+            .HasDefaultValue(Fund.DefaultMinLoanTermMonths);
+
+        builder.Property(f => f.MaxLoanTermMonths)
+            .IsRequired()
+            .HasDefaultValue(Fund.DefaultMaxLoanTermMonths);
+
         builder.Property(f => f.HowItWorks)
             .HasMaxLength(4000);
 

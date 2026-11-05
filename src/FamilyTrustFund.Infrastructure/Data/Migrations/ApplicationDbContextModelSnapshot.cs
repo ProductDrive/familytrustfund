@@ -255,6 +255,16 @@ namespace FamilyTrustFund.Infrastructure.Data.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
 
+                    b.Property<int>("MaxLoanTermMonths")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(60);
+
+                    b.Property<int>("MinLoanTermMonths")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(120)
@@ -310,6 +320,9 @@ namespace FamilyTrustFund.Infrastructure.Data.Migrations
                     b.Property<int?>("ApprovedFrequency")
                         .HasColumnType("integer");
 
+                    b.Property<int?>("ApprovedTermMonths")
+                        .HasColumnType("integer");
+
                     b.Property<DateTime?>("CancelledAtUtc")
                         .HasColumnType("timestamp with time zone");
 
@@ -363,6 +376,12 @@ namespace FamilyTrustFund.Infrastructure.Data.Migrations
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<int>("RequestedFrequency")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("RequestedInstalments")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("RequestedTermMonths")
                         .HasColumnType("integer");
 
                     b.Property<int>("Status")

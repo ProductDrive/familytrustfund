@@ -33,23 +33,37 @@ function CreateFundForm() {
   const [type, setType] = useState<FundType>('Family')
   const [committedCapital, setCommittedCapital] = useState('')
   const [interestRate, setInterestRate] = useState('')
+  const [minTerm, setMinTerm] = useState('1')
+  const [maxTerm, setMaxTerm] = useState('60')
+
+  const termRangeInvalid =
+    !minTerm ||
+    !maxTerm ||
+    Number(minTerm) < 1 ||
+    Number(maxTerm) < Number(minTerm) ||
+    Number(maxTerm) > 120
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!name.trim() || !committedCapital) return
     if (type === 'External' && !interestRate) return
+    if (termRangeInvalid) return
     createFund.mutate(
       {
         name: name.trim(),
         type,
         committedCapital: Number(committedCapital),
         interestRate: type === 'External' ? Number(interestRate) : null,
+        minLoanTermMonths: Number(minTerm),
+        maxLoanTermMonths: Number(maxTerm),
       },
       {
         onSuccess: () => {
           setName('')
           setCommittedCapital('')
           setInterestRate('')
+          setMinTerm('1')
+          setMaxTerm('60')
         },
       },
     )
@@ -110,6 +124,45 @@ function CreateFundForm() {
               required
             />
           </div>
+        )}
+        <div
+          className="grid"
+          style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}
+        >
+          <div className="field">
+            <label htmlFor="fund-min-term">Minimum loan term (months)</label>
+            <input
+              id="fund-min-term"
+              type="number"
+              min="1"
+              max="120"
+              value={minTerm}
+              onChange={(e) => setMinTerm(e.target.value)}
+              required
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="fund-max-term">Maximum loan term (months)</label>
+            <input
+              id="fund-max-term"
+              type="number"
+              min="1"
+              max="120"
+              value={maxTerm}
+              onChange={(e) => setMaxTerm(e.target.value)}
+              required
+            />
+          </div>
+        </div>
+        <p className="field-hint">
+          Members can request terms within this range. Defaults are 1–60 months;
+          the maximum is 120.
+        </p>
+        {termRangeInvalid && (
+          <p className="form-error">
+            Enter a valid term range: minimum at least 1, maximum no more than 120,
+            and maximum not less than minimum.
+          </p>
         )}
         {createFund.isError && (
           <p className="form-error">{(createFund.error as Error).message}</p>
@@ -305,6 +358,12 @@ function FundCard({ fund }: { fund: Fund }) {
           ) : (
             <MoneyDisplay amount={capacity.data?.availableLendingCapacity} />
           )}
+        </li>
+        <li>
+          <span className="property-label">Loan term range</span>
+          <span className="property-value">
+            {fund.minLoanTermMonths}–{fund.maxLoanTermMonths} months
+          </span>
         </li>
         {isFamily ? (
           <li>

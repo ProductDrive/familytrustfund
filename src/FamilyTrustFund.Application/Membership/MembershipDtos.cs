@@ -15,6 +15,8 @@ public sealed class MembershipDto
     public string JoinCode { get; init; } = string.Empty;
     public decimal ContributionMultiplier { get; init; }
     public decimal? InterestRate { get; init; }
+    public int MinLoanTermMonths { get; init; }
+    public int MaxLoanTermMonths { get; init; }
     public string? HowItWorks { get; init; }
     public MemberStatus Status { get; init; }
     public DateTime JoinedAtUtc { get; init; }
