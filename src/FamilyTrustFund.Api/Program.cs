@@ -82,6 +82,7 @@ builder.Services.Configure<FamilyTrustFund.Application.Auth.LoginOtpOptions>(
 builder.Services.Configure<FamilyTrustFund.Application.Auth.TermsOptions>(
     builder.Configuration.GetSection(FamilyTrustFund.Application.Auth.TermsOptions.SectionName));
 builder.Services.AddScoped<FamilyTrustFund.Application.Auth.ILoginOtpRepository, LoginOtpRepository>();
+builder.Services.AddScoped<FamilyTrustFund.Application.Auth.IUserAccountLookup, FamilyTrustFund.Infrastructure.Auth.UserAccountLookup>();
 builder.Services.AddScoped<FamilyTrustFund.Application.Auth.ITermsAcceptanceRepository, TermsAcceptanceRepository>();
 builder.Services.AddScoped<FamilyTrustFund.Application.Auth.LoginOtpService>();
 var otpEnabled = builder.Configuration.GetValue<bool>(

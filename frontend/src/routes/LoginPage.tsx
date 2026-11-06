@@ -89,7 +89,17 @@ function OtpSignIn({ termsVersion }: { termsVersion: string }) {
           setCode('')
           setStep('code')
         },
-        onError: (err) => setError(errorMessage(err)),
+        onError: (err) => {
+          // Terms are a sign-up step. The server asks for acceptance only when
+          // this email does not yet have an account, so an existing Guarantor
+          // goes straight to the code and never sees the terms screen.
+          if ((err as { code?: string }).code === 'terms_required') {
+            setTermsAccepted(false)
+            setStep('terms')
+            return
+          }
+          setError(errorMessage(err))
+        },
       },
     )
   }
@@ -97,12 +107,7 @@ function OtpSignIn({ termsVersion }: { termsVersion: string }) {
   function handleEmailStep(e: React.FormEvent) {
     e.preventDefault()
     if (!email.trim()) return
-    if (role === 'Guarantor' && !termsAccepted) {
-      setError(null)
-      setStep('terms')
-      return
-    }
-    sendCode(role === 'Guarantor')
+    sendCode(role === 'Guarantor' && termsAccepted)
   }
 
   function handleVerify(e: React.FormEvent) {
@@ -219,7 +224,7 @@ function OtpSignIn({ termsVersion }: { termsVersion: string }) {
           className="link-button"
           onClick={() => {
             setError(null)
-            setStep(role === 'Guarantor' ? 'terms' : 'email')
+            setStep('email')
           }}
         >
           Use a different email
@@ -238,7 +243,12 @@ function OtpSignIn({ termsVersion }: { termsVersion: string }) {
           id="otp-email"
           type="email"
           value={email}
-          onChange={(e) => setEmail(e.target.value)}
+          onChange={(e) => {
+            setEmail(e.target.value)
+            // A previously accepted terms choice only applies to the email it
+            // was accepted for; any edit means the server must decide again.
+            setTermsAccepted(false)
+          }}
           placeholder="you@example.com"
           autoComplete="email"
           autoFocus

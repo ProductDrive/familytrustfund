@@ -28,10 +28,14 @@ function loadAntiforgeryToken(): Promise<string | null> {
 
 export class ApiError extends Error {
   status: number
-  constructor(status: number, message: string) {
+  // Stable machine-readable code from the API error body (e.g. "terms_required").
+  // Absent for transport/Infrastructure failures.
+  code?: string
+  constructor(status: number, message: string, code?: string) {
     super(message)
     this.name = 'ApiError'
     this.status = status
+    this.code = code
   }
 }
 
@@ -42,14 +46,16 @@ async function handle<T>(res: Response): Promise<T> {
   }
   if (!res.ok) {
     let message = `Request failed with status ${res.status}`
+    let code: string | undefined
     try {
       const body = await res.json()
       if (body?.title) message = body.title
       else if (body?.message) message = body.message
+      if (typeof body?.code === 'string') code = body.code
     } catch {
       // ignore non-JSON error bodies
     }
-    throw new ApiError(res.status, message)
+    throw new ApiError(res.status, message, code)
   }
   if (res.status === 204) return undefined as T
   return res.json() as Promise<T>

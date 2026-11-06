@@ -16,17 +16,20 @@ namespace FamilyTrustFund.Application.Auth;
 public class LoginOtpService
 {
     private readonly ILoginOtpRepository _repository;
+    private readonly IUserAccountLookup _accounts;
     private readonly IEmailSender _emailSender;
     private readonly LoginOtpOptions _options;
     private readonly TermsOptions _termsOptions;
 
     public LoginOtpService(
         ILoginOtpRepository repository,
+        IUserAccountLookup accounts,
         IEmailSender emailSender,
         IOptions<LoginOtpOptions> options,
         IOptions<TermsOptions> termsOptions)
     {
         _repository = repository;
+        _accounts = accounts;
         _emailSender = emailSender;
         _options = options.Value;
         _termsOptions = termsOptions.Value;
@@ -54,8 +57,12 @@ public class LoginOtpService
             throw InvalidOtpRequestException.InvalidRole();
         }
 
+        // Accepting the Guarantor terms is a sign-up step, not a sign-in step.
+        // Existing accounts are never shown the terms prompt again, so the
+        // requirement only applies when this email does not yet have an account.
         string? acceptedVersion = null;
-        if (role == AppRoles.Guarantor)
+        if (role == AppRoles.Guarantor
+            && !await _accounts.ExistsAsync(normalizedEmail, ct))
         {
             if (!termsAccepted)
             {

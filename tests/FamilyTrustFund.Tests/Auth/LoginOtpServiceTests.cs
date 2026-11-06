@@ -14,12 +14,14 @@ public class LoginOtpServiceTests
 
     private static (LoginOtpService Service, FakeLoginOtpRepository Repo, FakeEmailSender Email) Build(
         LoginOtpOptions? options = null,
-        TermsOptions? terms = null)
+        TermsOptions? terms = null,
+        FakeUserAccountLookup? accounts = null)
     {
         var repo = new FakeLoginOtpRepository();
         var email = new FakeEmailSender();
         var service = new LoginOtpService(
             repo,
+            accounts ?? new FakeUserAccountLookup(),
             email,
             Options.Create(options ?? new LoginOtpOptions()),
             Options.Create(terms ?? new TermsOptions { CurrentVersion = "1.0" }));
@@ -65,7 +67,7 @@ public class LoginOtpServiceTests
     }
 
     [Fact]
-    public async Task Guarantor_without_accepting_terms_is_rejected()
+    public async Task New_guarantor_without_accepting_terms_is_rejected()
     {
         var (service, _, _) = Build();
 
@@ -76,7 +78,36 @@ public class LoginOtpServiceTests
     }
 
     [Fact]
-    public async Task Guarantor_with_a_stale_terms_version_is_rejected()
+    public async Task Existing_guarantor_signs_in_without_accepting_terms_again()
+    {
+        var accounts = new FakeUserAccountLookup();
+        accounts.ExistingEmails.Add(Email);
+        var (service, repo, email) = Build(accounts: accounts);
+
+        await service.RequestAsync(Email, AppRoles.Guarantor, termsAccepted: false, termsVersion: null);
+
+        var otp = repo.Items.Single();
+        otp.RequestedRole.Should().Be(AppRoles.Guarantor);
+        otp.TermsVersion.Should().BeNull();
+        email.Sent.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task Existing_guarantor_is_not_blocked_by_a_stale_client_terms_version()
+    {
+        var accounts = new FakeUserAccountLookup();
+        accounts.ExistingEmails.Add(Email);
+        var (service, repo, _) = Build(accounts: accounts);
+
+        await service.RequestAsync(Email, AppRoles.Guarantor, termsAccepted: true, termsVersion: "0.9");
+
+        // Terms only matter when the account is created, so they are not
+        // recorded (or re-validated) on a returning user's code.
+        repo.Items.Single().TermsVersion.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task New_guarantor_with_a_stale_terms_version_is_rejected()
     {
         var (service, _, _) = Build();
 
@@ -87,7 +118,7 @@ public class LoginOtpServiceTests
     }
 
     [Fact]
-    public async Task Guarantor_with_the_current_terms_records_role_and_version()
+    public async Task New_guarantor_with_the_current_terms_records_role_and_version()
     {
         var (service, repo, _) = Build();
 

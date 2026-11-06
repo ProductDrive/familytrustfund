@@ -686,6 +686,14 @@ public sealed class FakeLoginOtpRepository : ILoginOtpRepository
     public Task SaveChangesAsync(CancellationToken ct = default) => Task.CompletedTask;
 }
 
+public sealed class FakeUserAccountLookup : IUserAccountLookup
+{
+    public HashSet<string> ExistingEmails { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public Task<bool> ExistsAsync(string email, CancellationToken ct = default) =>
+        Task.FromResult(ExistingEmails.Contains(email));
+}
+
 public sealed class FakeTermsAcceptanceRepository : ITermsAcceptanceRepository
 {
     public List<TermsAcceptance> Items { get; } = new();
