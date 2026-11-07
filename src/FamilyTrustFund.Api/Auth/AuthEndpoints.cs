@@ -125,6 +125,9 @@ public static class AuthEndpoints
             return Results.Redirect(postLoginRedirect);
         });
 
+        // POST only: a GET logout can be triggered by prefetch/crawlers, and the
+        // SameSite=Lax auth cookie is withheld from cross-site POSTs, which
+        // blocks logout CSRF without an antiforgery token.
         group.MapPost("/logout", async (SignInManager<ApplicationUser> signInManager) =>
         {
             await signInManager.SignOutAsync();

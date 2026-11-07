@@ -273,7 +273,7 @@ function LoanRequestForm({ onDone }: { onDone: () => void }) {
           style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}
         >
           <div className="field">
-            <label htmlFor="loan-term">Term (months)</label>
+            <label htmlFor="loan-term">Repayment Term (months)</label>
             <input
               id="loan-term"
               type="number"

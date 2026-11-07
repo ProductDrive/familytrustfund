@@ -231,7 +231,7 @@ function ApproveForm({ loan, onDone }: { loan: Loan; onDone: () => void }) {
             style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}
           >
             <div className="field">
-              <label htmlFor={`term-${loan.id}`}>Term (months)</label>
+              <label htmlFor={`term-${loan.id}`}>Repayment Term (months)</label>
               <input
                 id={`term-${loan.id}`}
                 type="number"
@@ -395,11 +395,11 @@ export function GuarantorLoansPage() {
                     <MoneyDisplay amount={l.requestedAmount} />
                   </li>
                   <li>
-                    <span className="property-label">Frequency</span>
+                    <span className="property-label">Repayment Frequency</span>
                     <span className="property-value">{l.requestedFrequency}</span>
                   </li>
                   <li>
-                    <span className="property-label">Term</span>
+                    <span className="property-label">Repayment Term</span>
                     <span className="property-value">
                       {l.requestedTermMonths != null
                         ? `${l.requestedTermMonths} month(s) · `

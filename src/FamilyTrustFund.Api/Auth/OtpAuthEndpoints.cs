@@ -103,11 +103,39 @@ public static class OtpAuthEndpoints
                     });
                 }
 
+                var rolesAssigned = await AssignRolesAsync(
+                    userManager,
+                    user,
+                    AppRoles.RolesForNewAccount(verification.RequestedRole),
+                    logger);
+                if (!rolesAssigned)
+                {
+                    // Roll the half-provisioned account back so the user can
+                    // retry; signing in without a role would 403 everywhere.
+                    await userManager.DeleteAsync(user);
+                    return Results.BadRequest(new
+                    {
+                        code = "create_failed",
+                        message = "We could not finish creating your account. Please try again.",
+                    });
+                }
+
                 if (verification.RequestedRole == AppRoles.Guarantor)
                 {
-                    await userManager.AddToRoleAsync(user, AppRoles.Guarantor);
                     user.GuarantorApprovalStatus = GuarantorApprovalStatus.Pending;
-                    await userManager.UpdateAsync(user);
+                    var updateResult = await userManager.UpdateAsync(user);
+                    if (!updateResult.Succeeded)
+                    {
+                        logger.LogError("Failed to mark new Guarantor {Email} as pending: {Errors}",
+                            verification.Email,
+                            string.Join("; ", updateResult.Errors.Select(e => e.Description)));
+                        await userManager.DeleteAsync(user);
+                        return Results.BadRequest(new
+                        {
+                            code = "create_failed",
+                            message = "We could not finish creating your account. Please try again.",
+                        });
+                    }
 
                     if (!string.IsNullOrWhiteSpace(verification.TermsVersion)
                         && !await termsRepository.ExistsAsync(user.Id, verification.TermsVersion, ct))
@@ -117,6 +145,32 @@ public static class OtpAuthEndpoints
                     }
 
                     logger.LogInformation("Guarantor registration pending approval for {Email}.", verification.Email);
+                }
+                else
+                {
+                    logger.LogInformation("Member account created for {Email}.", verification.Email);
+                }
+            }
+            else
+            {
+                // Earlier builds could create an account with no role at all,
+                // which authenticates but then 403s on every endpoint. Heal
+                // those accounts with the safe Member baseline; never assign a
+                // privileged role based on the client's role picker.
+                var existingRoles = await userManager.GetRolesAsync(user);
+                if (existingRoles.Count == 0)
+                {
+                    logger.LogWarning(
+                        "Existing account {Email} had no role; assigning the Member baseline.",
+                        verification.Email);
+                    if (!await AssignRolesAsync(userManager, user, new[] { AppRoles.Member }, logger))
+                    {
+                        return Results.BadRequest(new
+                        {
+                            code = "create_failed",
+                            message = "We could not restore access to your account. Please contact support.",
+                        });
+                    }
                 }
             }
 
@@ -135,5 +189,34 @@ public static class OtpAuthEndpoints
         .RequireRateLimiting(VerifyPolicy);
 
         return app;
+    }
+
+    /// <summary>
+    /// Assigns every role a brand-new account needs. Returns false (and logs)
+    /// when Identity rejects an assignment so the caller can roll the account
+    /// back instead of leaving a signed-in user with no permissions.
+    /// </summary>
+    private static async Task<bool> AssignRolesAsync(
+        UserManager<ApplicationUser> userManager,
+        ApplicationUser user,
+        IEnumerable<string> roles,
+        ILogger logger)
+    {
+        foreach (var role in roles)
+        {
+            var result = await userManager.AddToRoleAsync(user, role);
+            if (result.Succeeded)
+            {
+                continue;
+            }
+
+            logger.LogError("Failed to assign role {Role} to OTP user {Email}: {Errors}",
+                role,
+                user.Email,
+                string.Join("; ", result.Errors.Select(e => e.Description)));
+            return false;
+        }
+
+        return true;
     }
 }

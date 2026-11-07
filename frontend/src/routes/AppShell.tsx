@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { Landmark, LogOut, Menu, Users, LayoutDashboard, HandCoins, PiggyBank, Send, Wallet, BadgeCheck } from 'lucide-react'
-import { useCurrentUser, type Role } from '../features/auth/authApi'
+import { useCurrentUser, useLogout, type Role } from '../features/auth/authApi'
 import { Avatar, LogoMark } from '../components/ui/Avatar'
 import { ThemeToggle } from '../components/ui/ThemeToggle'
 import { Badge } from '../components/ui/Badge'
@@ -38,6 +38,7 @@ const NavItem = ({
 
 export function AppShell() {
   const { data: user } = useCurrentUser()
+  const logout = useLogout()
   const [menuOpen, setMenuOpen] = useState(false)
   const closeMenu = () => setMenuOpen(false)
   const greeting = useGreeting()
@@ -168,10 +169,20 @@ export function AppShell() {
               <div className="user-chip-role">{roleLabel[primaryRole]}</div>
             </div>
           </div>
-          <a className="logout-link" href="/api/auth/logout">
+          <button
+            type="button"
+            className="logout-link"
+            onClick={() => logout.mutate()}
+            disabled={logout.isPending}
+          >
             <LogOut size={16} />
-            Log out
-          </a>
+            {logout.isPending ? 'Signing out…' : 'Log out'}
+          </button>
+          {logout.isError && (
+            <p className="logout-error" role="alert">
+              {(logout.error as Error).message || 'Could not sign out. Please try again.'}
+            </p>
+          )}
         </div>
       </aside>
 

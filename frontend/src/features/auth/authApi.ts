@@ -55,6 +55,22 @@ export function useVerifyOtp() {
   })
 }
 
+/**
+ * Ends the server-side session cookie, drops every cached response so the next
+ * account on this browser cannot see the previous user's financial data, then
+ * does a full reload to reset in-memory app state.
+ */
+export function useLogout() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.post<void>('/auth/logout'),
+    onSuccess: () => {
+      queryClient.clear()
+      window.location.replace('/login')
+    },
+  })
+}
+
 export interface DevLoginRequest {
   email: string
   displayName: string

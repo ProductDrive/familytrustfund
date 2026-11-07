@@ -5,6 +5,7 @@ import {
   useVerifyOtp,
   useSignInOptions,
   useDevLogin,
+  useLogout,
   type Role,
 } from '../features/auth/authApi'
 import { LogoMark } from '../components/ui/Avatar'
@@ -66,6 +67,7 @@ export function LoginPage() {
 function OtpSignIn({ termsVersion }: { termsVersion: string }) {
   const requestOtp = useRequestOtp()
   const verifyOtp = useVerifyOtp()
+  const logout = useLogout()
 
   const [step, setStep] = useState<Step>('email')
   const [email, setEmail] = useState('')
@@ -136,8 +138,17 @@ function OtpSignIn({ termsVersion }: { termsVersion: string }) {
         <p className="muted">
           Your Guarantor account is awaiting approval. Please contact Productdrive.proton.me
         </p>
-        <Button className="btn--block" onClick={() => (window.location.href = '/')}>
-          Back to sign in
+        {logout.isError && (
+          <p className="form-error" role="alert">
+            {(logout.error as Error).message || 'Could not sign out. Please try again.'}
+          </p>
+        )}
+        <Button
+          className="btn--block"
+          onClick={() => logout.mutate()}
+          disabled={logout.isPending}
+        >
+          {logout.isPending ? 'Signing out…' : 'Back to sign in'}
         </Button>
       </div>
     )
