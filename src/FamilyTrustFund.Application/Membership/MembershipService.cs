@@ -14,17 +14,20 @@ public class MembershipService
 {
     private readonly IFundRepository _fundRepository;
     private readonly IMembershipRepository _membershipRepository;
+    private readonly IFundAccessService _fundAccess;
     private readonly IAuditLog _auditLog;
     private readonly IGuarantorRoleChecker _guarantorRoleChecker;
 
     public MembershipService(
         IFundRepository fundRepository,
         IMembershipRepository membershipRepository,
+        IFundAccessService fundAccess,
         IAuditLog auditLog,
         IGuarantorRoleChecker guarantorRoleChecker)
     {
         _fundRepository = fundRepository;
         _membershipRepository = membershipRepository;
+        _fundAccess = fundAccess;
         _auditLog = auditLog;
         _guarantorRoleChecker = guarantorRoleChecker;
     }
@@ -120,7 +123,7 @@ public class MembershipService
         CancellationToken ct = default)
     {
         var fund = await _fundRepository.GetByIdAsync(fundId, ct);
-        if (fund is null || fund.GuarantorId != guarantorId)
+        if (fund is null || !await _fundAccess.CanAccessFundAsync(fund, guarantorId, ct))
         {
             return null;
         }

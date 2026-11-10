@@ -35,6 +35,16 @@ public class FundContribution
     /// <summary>Optional free-text note added by the Guarantor when confirming.</summary>
     public string? ConfirmationNote { get; private set; }
 
+    /// <summary>
+    /// The Guarantor who confirmed this contribution. In a Group Guarantor fund
+    /// any one active Guarantor may confirm, so the decision must be
+    /// attributable (ADR-054).
+    /// </summary>
+    public Guid? ConfirmedByUserId { get; private set; }
+
+    /// <summary>The Guarantor who rejected this contribution.</summary>
+    public Guid? RejectedByUserId { get; private set; }
+
     public DateTime ReportedAtUtc { get; private set; }
     public DateTime? ConfirmedAtUtc { get; private set; }
     public DateTime? RejectedAtUtc { get; private set; }
@@ -98,11 +108,20 @@ public class FundContribution
     /// <summary>
     /// Guarantor confirms a pending contribution, posting it to Fund Credit.
     /// </summary>
-    public void Confirm(string? note = null)
+    /// <param name="confirmedByUserId">
+    /// The Guarantor recording the decision. Required so that a shared manual
+    /// confirmation is always attributable (ADR-054).
+    /// </param>
+    public void Confirm(Guid confirmedByUserId, string? note = null)
     {
         if (Status != ContributionStatus.PendingConfirmation)
         {
             throw new InvalidContributionException("Only pending contributions can be confirmed.");
+        }
+
+        if (confirmedByUserId == Guid.Empty)
+        {
+            throw new InvalidContributionException("A confirming Guarantor is required.");
         }
 
         if (note is not null && note.Length > 1000)
@@ -112,6 +131,7 @@ public class FundContribution
 
         Status = ContributionStatus.Confirmed;
         ConfirmationNote = string.IsNullOrWhiteSpace(note) ? null : note.Trim();
+        ConfirmedByUserId = confirmedByUserId;
         ConfirmedAtUtc = DateTime.UtcNow;
         Touch();
     }
@@ -120,11 +140,16 @@ public class FundContribution
     /// Guarantor rejects a pending contribution. A rejected contribution never
     /// affects Fund Credit.
     /// </summary>
-    public void Reject(string? reason = null)
+    public void Reject(Guid rejectedByUserId, string? reason = null)
     {
         if (Status != ContributionStatus.PendingConfirmation)
         {
             throw new InvalidContributionException("Only pending contributions can be rejected.");
+        }
+
+        if (rejectedByUserId == Guid.Empty)
+        {
+            throw new InvalidContributionException("A rejecting Guarantor is required.");
         }
 
         if (reason is not null && reason.Length > 1000)
@@ -134,6 +159,7 @@ public class FundContribution
 
         Status = ContributionStatus.Rejected;
         RejectionReason = string.IsNullOrWhiteSpace(reason) ? null : reason.Trim();
+        RejectedByUserId = rejectedByUserId;
         RejectedAtUtc = DateTime.UtcNow;
         Touch();
     }

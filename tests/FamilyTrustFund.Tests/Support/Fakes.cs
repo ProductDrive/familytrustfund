@@ -53,8 +53,8 @@ public sealed class FakeFundRepository : IFundRepository
     public Task<Fund?> GetByJoinCodeAsync(string joinCode, CancellationToken ct = default) =>
         Task.FromResult(Funds.FirstOrDefault(f => f.JoinCode == joinCode.Trim().ToUpperInvariant()));
 
-    public Task<bool> JoinCodeExistsAsync(Guid guarantorId, string joinCode, CancellationToken ct = default) =>
-        Task.FromResult(Funds.Any(f => f.GuarantorId == guarantorId && f.JoinCode == joinCode.Trim().ToUpperInvariant()));
+    public Task<bool> JoinCodeExistsAsync(string joinCode, CancellationToken ct = default) =>
+        Task.FromResult(Funds.Any(f => f.JoinCode == joinCode.Trim().ToUpperInvariant()));
 
     public void Add(Fund fund) => Funds.Add(fund);
 
@@ -94,6 +94,8 @@ public sealed class FakeLoanRepository : ILoanRepository
 {
     public List<Loan> Loans { get; } = new();
 
+    public List<LoanApproval> Approvals { get; } = new();
+
     public List<LoanWithDetails> LoanDetails { get; set; } = new();
 
     public Dictionary<Guid, decimal> DisbursedTotals { get; set; } = new();
@@ -103,12 +105,22 @@ public sealed class FakeLoanRepository : ILoanRepository
     public Task<Loan?> GetByIdAsync(Guid id, CancellationToken ct = default) =>
         Task.FromResult(Loans.FirstOrDefault(l => l.Id == id));
 
+    public Task<Loan?> GetByIdAsNoTrackingAsync(Guid id, CancellationToken ct = default) =>
+        Task.FromResult(Loans.FirstOrDefault(l => l.Id == id));
+
     public Task<IReadOnlyList<LoanWithDetails>> GetPendingForGuarantorAsync(
         Guid guarantorId,
         CancellationToken ct = default)
     {
         var pending = Loans
             .Where(l => l.Status == LoanStatus.Pending)
+            .Where(l =>
+            {
+                var approvals = Approvals.Where(a => a.LoanId == l.Id).ToList();
+                // Legacy single-Guarantor loans may have no approval rows yet.
+                return approvals.Count == 0
+                    || approvals.Any(a => a.GuarantorId == guarantorId && a.IsPending);
+            })
             .Select(l => new LoanWithDetails
             {
                 Loan = l,
@@ -172,6 +184,40 @@ public sealed class FakeLoanRepository : ILoanRepository
     {
         return Task.FromResult(PendingRequests.Contains((memberId, fundId)));
     }
+
+    public Task<bool> HasPendingInFundAsync(Guid fundId, CancellationToken ct = default) =>
+        Task.FromResult(Loans.Any(l => l.FundId == fundId && l.Status == LoanStatus.Pending));
+
+    public Task<IReadOnlyList<LoanApproval>> GetApprovalsAsync(
+        Guid loanId,
+        CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<LoanApproval>>(
+            Approvals.Where(a => a.LoanId == loanId).ToList());
+
+    public Task<LoanApproval?> GetApprovalAsync(
+        Guid loanId,
+        Guid guarantorId,
+        CancellationToken ct = default) =>
+        Task.FromResult(Approvals.FirstOrDefault(
+            a => a.LoanId == loanId && a.GuarantorId == guarantorId));
+
+    public Task<IReadOnlyList<LoanApprovalWithDetails>> GetApprovalsWithDetailsAsync(
+        IReadOnlyCollection<Guid> loanIds,
+        CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<LoanApprovalWithDetails>>(
+            Approvals
+                .Where(a => loanIds.Contains(a.LoanId))
+                .Select(a => new LoanApprovalWithDetails
+                {
+                    Approval = a,
+                    GuarantorDisplayName = $"Guarantor {a.GuarantorId:N}"[..16],
+                    GuarantorEmail = $"{a.GuarantorId:N}@example.com",
+                })
+                .ToList());
+
+    public void AddApproval(LoanApproval approval) => Approvals.Add(approval);
+
+    public void AddApprovals(IEnumerable<LoanApproval> approvals) => Approvals.AddRange(approvals);
 
     public void Add(Loan loan) => Loans.Add(loan);
 
@@ -727,4 +773,168 @@ public sealed class FakeGuarantorRoleChecker : FamilyTrustFund.Application.Membe
 {
     public bool Guarantor { get; set; }
     public Task<bool> IsGuarantorAsync(Guid userId, CancellationToken ct = default) => Task.FromResult(Guarantor);
+}
+
+public sealed class FakeFundGuarantorRepository : IFundGuarantorRepository
+{
+    private readonly FakeFundRepository? _funds;
+
+    public FakeFundGuarantorRepository(FakeFundRepository? funds = null)
+    {
+        _funds = funds;
+    }
+
+    public List<FundGuarantor> Memberships { get; } = new();
+
+    public List<GuarantorAccount> Accounts { get; } = new();
+
+    public Dictionary<Guid, GuarantorProfile> Profiles { get; } = new();
+
+    public Task<FundGuarantor?> GetByIdAsync(Guid id, CancellationToken ct = default) =>
+        Task.FromResult(Memberships.FirstOrDefault(m => m.Id == id));
+
+    public Task<FundGuarantor?> GetAsync(
+        Guid fundId,
+        Guid guarantorId,
+        CancellationToken ct = default) =>
+        Task.FromResult(Memberships.FirstOrDefault(
+            m => m.FundId == fundId && m.GuarantorId == guarantorId));
+
+    public Task<IReadOnlyList<FundGuarantor>> GetByFundAsync(
+        Guid fundId,
+        CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<FundGuarantor>>(
+            Memberships.Where(m => m.FundId == fundId).ToList());
+
+    public Task<IReadOnlyList<FundGuarantor>> GetActiveByFundAsync(
+        Guid fundId,
+        CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<FundGuarantor>>(
+            Memberships.Where(m => m.FundId == fundId && m.IsActive).ToList());
+
+    public Task<IReadOnlyList<FundGuarantorWithDetails>> GetByGuarantorAsync(
+        Guid guarantorId,
+        CancellationToken ct = default)
+    {
+        var items = Memberships
+            .Where(m => m.GuarantorId == guarantorId)
+            .Select(m =>
+            {
+                var fund = _funds?.Funds.FirstOrDefault(f => f.Id == m.FundId);
+                var originatorId = fund?.GuarantorId ?? Guid.Empty;
+                Profiles.TryGetValue(originatorId, out var originator);
+                return new FundGuarantorWithDetails
+                {
+                    Membership = m,
+                    FundId = m.FundId,
+                    FundName = fund?.Name ?? string.Empty,
+                    FundType = fund?.Type ?? FundType.Family,
+                    OriginatorId = originatorId,
+                    OriginatorDisplayName = originator?.DisplayName ?? string.Empty,
+                    OriginatorEmail = originator?.Email ?? string.Empty,
+                };
+            })
+            .ToList();
+
+        return Task.FromResult<IReadOnlyList<FundGuarantorWithDetails>>(items);
+    }
+
+    public Task<int> CountActiveAsync(Guid fundId, CancellationToken ct = default) =>
+        Task.FromResult(Memberships.Count(m => m.FundId == fundId && m.IsActive));
+
+    public Task<GuarantorAccount?> FindGuarantorByEmailAsync(
+        string email,
+        CancellationToken ct = default) =>
+        Task.FromResult(Accounts.FirstOrDefault(a =>
+            string.Equals(a.Email, email.Trim(), StringComparison.OrdinalIgnoreCase)));
+
+    public Task<IReadOnlyDictionary<Guid, GuarantorProfile>> GetProfilesAsync(
+        IEnumerable<Guid> guarantorIds,
+        CancellationToken ct = default)
+    {
+        var ids = guarantorIds.ToHashSet();
+        var result = Profiles
+            .Where(kv => ids.Contains(kv.Key))
+            .ToDictionary(kv => kv.Key, kv => kv.Value);
+
+        return Task.FromResult<IReadOnlyDictionary<Guid, GuarantorProfile>>(result);
+    }
+
+    public void Add(FundGuarantor membership) => Memberships.Add(membership);
+
+    public Task SaveChangesAsync(CancellationToken ct = default) => Task.CompletedTask;
+}
+
+public sealed class FakeFundAccessService : IFundAccessService
+{
+    private readonly FakeFundRepository _funds;
+    private readonly FakeFundGuarantorRepository _guarantors;
+
+    public FakeFundAccessService(
+        FakeFundRepository funds,
+        FakeFundGuarantorRepository? guarantors = null)
+    {
+        _funds = funds;
+        _guarantors = guarantors ?? new FakeFundGuarantorRepository(funds);
+    }
+
+    public Task<bool> CanAccessFundAsync(
+        Fund fund,
+        Guid userId,
+        CancellationToken ct = default)
+    {
+        if (fund.GuarantorId == userId)
+        {
+            return Task.FromResult(true);
+        }
+
+        if (!fund.IsGroupFund)
+        {
+            return Task.FromResult(false);
+        }
+
+        return Task.FromResult(_guarantors.Memberships.Any(m =>
+            m.FundId == fund.Id && m.GuarantorId == userId && m.IsActive));
+    }
+
+    public async Task<bool> CanAccessFundAsync(
+        Guid fundId,
+        Guid userId,
+        CancellationToken ct = default)
+    {
+        var fund = await _funds.GetByIdAsync(fundId, ct);
+        return fund is not null && await CanAccessFundAsync(fund, userId, ct);
+    }
+
+    public async Task<bool> IsOriginatorAsync(
+        Guid fundId,
+        Guid userId,
+        CancellationToken ct = default)
+    {
+        var fund = await _funds.GetByIdAsync(fundId, ct);
+        return fund is not null && fund.GuarantorId == userId;
+    }
+
+    public Task<IReadOnlyList<Guid>> GetRequiredApproverIdsAsync(
+        Fund fund,
+        CancellationToken ct = default)
+    {
+        if (!fund.IsGroupFund)
+        {
+            return Task.FromResult<IReadOnlyList<Guid>>(new[] { fund.GuarantorId });
+        }
+
+        var ids = _guarantors.Memberships
+            .Where(m => m.FundId == fund.Id && m.IsActive)
+            .Select(m => m.GuarantorId)
+            .ToList();
+
+        // The Fund Originator always decides, even if a membership row is missing.
+        if (!ids.Contains(fund.GuarantorId))
+        {
+            ids.Insert(0, fund.GuarantorId);
+        }
+
+        return Task.FromResult<IReadOnlyList<Guid>>(ids);
+    }
 }

@@ -4,6 +4,7 @@ import { useSearchParams } from 'react-router-dom'
 import { ExternalLink, HandCoins, RefreshCw, Send, ShieldCheck, X } from 'lucide-react'
 import { useFunds } from '../funds/fundApi'
 import { useFundLoans, useGuarantorCancelLoan } from '../loans/loanApi'
+import { useCurrentUser } from '../auth/authApi'
 import {
   useCancelDisbursement,
   useDisburseLoan,
@@ -75,7 +76,7 @@ function PendingActions({
   )
 }
 
-function DisburseButton({ loan }: { loan: Loan }) {
+function DisburseButton({ loan, isOriginator }: { loan: Loan; isOriginator: boolean }) {
   const disburse = useDisburseLoan()
   const cancel = useGuarantorCancelLoan()
   const cancelDisbursement = useCancelDisbursement()
@@ -101,6 +102,17 @@ function DisburseButton({ loan }: { loan: Loan }) {
 
   if (isLoading) {
     return <span className="cell-secondary">…</span>
+  }
+
+  if (!isOriginator) {
+    if (loan.status === 'Approved' || loan.status === 'DisbursementPending') {
+      return (
+        <span className="cell-secondary">
+          Only the Fund Originator can disburse this loan.
+        </span>
+      )
+    }
+    return <span className="cell-secondary">—</span>
   }
 
   if (disbursement) {
@@ -283,9 +295,12 @@ function DisbursementReturnBanner({
 
 export function GuarantorDisbursePage() {
   const { data: funds, isLoading: loadingFunds } = useFunds()
+  const { data: user } = useCurrentUser()
   const [searchParams, setSearchParams] = useSearchParams()
   const [fundId, setFundId] = useState(() => searchParams.get('fund') ?? '')
   const selectedFundId = fundId || (funds && funds.length > 0 ? funds[0].id : '')
+  const selectedFund = funds?.find((f) => f.id === selectedFundId)
+  const isOriginator = !!selectedFund && selectedFund.guarantorId === user?.id
   const { data: loans, isLoading: loadingLoans } = useFundLoans(selectedFundId ?? null)
   const [returnBanner, setReturnBanner] = useState<{ fundId: string; reference: string } | null>(null)
   const highlightLoanId = searchParams.get('loan')
@@ -386,7 +401,7 @@ export function GuarantorDisbursePage() {
                         <StatusBadge status={l.status} withDot />
                       </td>
                       <td>
-                        <DisburseButton loan={l} />
+                        <DisburseButton loan={l} isOriginator={isOriginator} />
                       </td>
                     </tr>
                   ))}

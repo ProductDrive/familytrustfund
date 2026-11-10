@@ -1,4 +1,5 @@
 using FamilyTrustFund.Application.Repayments;
+using FamilyTrustFund.Domain.Funds;
 using FamilyTrustFund.Domain.Repayments;
 using FamilyTrustFund.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
@@ -41,7 +42,12 @@ public class PendingRepaymentRepository : IPendingRepaymentRepository
             .Where(p => p.Status == PendingRepaymentStatus.PendingConfirmation)
             .Join(_db.Loans, p => p.LoanId, l => l.Id, (p, l) => new { Pending = p, Loan = l })
             .Join(_db.Funds, x => x.Loan.FundId, f => f.Id, (x, f) => new { x.Pending, x.Loan, Fund = f })
-            .Where(x => x.Fund.GuarantorId == guarantorId)
+            .Where(x =>
+                x.Fund.GuarantorId == guarantorId
+                || _db.FundGuarantors.Any(g =>
+                    g.FundId == x.Fund.Id
+                    && g.GuarantorId == guarantorId
+                    && g.Status == FundGuarantorStatus.Active))
             .Join(_db.Users, x => x.Pending.MemberId, u => u.Id, (x, u) => new PendingRepaymentWithDetails
             {
                 Pending = x.Pending,

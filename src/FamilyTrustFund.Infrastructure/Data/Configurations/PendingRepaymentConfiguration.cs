@@ -22,7 +22,18 @@ public class PendingRepaymentConfiguration : IEntityTypeConfiguration<PendingRep
         builder.Property(p => p.Note).HasMaxLength(1000);
         builder.Property(p => p.Status).IsRequired();
         builder.Property(p => p.RejectionReason).HasMaxLength(1000);
+        builder.Property(p => p.ConfirmationNote).HasMaxLength(1000);
+        builder.Property(p => p.ConfirmedByUserId);
+        builder.Property(p => p.RejectedByUserId);
         builder.Property(p => p.ReportedAtUtc).IsRequired();
+
+        // Optimistic concurrency: two Group Guarantors must not both post the
+        // same manual repayment (ADR-054).
+        builder.Property<uint>("xmin")
+            .HasColumnName("xmin")
+            .HasColumnType("xid")
+            .ValueGeneratedOnAddOrUpdate()
+            .IsConcurrencyToken();
 
         builder.HasIndex(p => p.LoanId);
         builder.HasIndex(p => new { p.MemberId, p.Status });

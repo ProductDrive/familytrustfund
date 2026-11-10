@@ -14,6 +14,12 @@ public sealed class CreateFundRequest
     public decimal? InterestRate { get; init; }
 
     /// <summary>
+    /// Whether the fund is operated by one Guarantor (default) or by a group of
+    /// Guarantors who jointly approve loans (ADR-051). Immutable after creation.
+    /// </summary>
+    public FundGuarantorMode GuarantorMode { get; init; } = FundGuarantorMode.Single;
+
+    /// <summary>
     /// Minimum loan term in months allowed by this fund. Defaults to 1.
     /// </summary>
     public int? MinLoanTermMonths { get; init; }

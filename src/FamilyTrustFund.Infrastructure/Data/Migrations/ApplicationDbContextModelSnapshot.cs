@@ -111,10 +111,14 @@ namespace FamilyTrustFund.Infrastructure.Data.Migrations
                         .HasColumnType("numeric(18,2)");
 
                     b.Property<string>("ConfirmationNote")
-                        .HasColumnType("text");
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
 
                     b.Property<DateTime?>("ConfirmedAtUtc")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("ConfirmedByUserId")
+                        .HasColumnType("uuid");
 
                     b.Property<DateTime>("CreatedAtUtc")
                         .HasColumnType("timestamp with time zone");
@@ -136,6 +140,9 @@ namespace FamilyTrustFund.Infrastructure.Data.Migrations
                     b.Property<DateTime?>("RejectedAtUtc")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<Guid?>("RejectedByUserId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("RejectionReason")
                         .HasMaxLength(1000)
                         .HasColumnType("character varying(1000)");
@@ -148,6 +155,12 @@ namespace FamilyTrustFund.Infrastructure.Data.Migrations
 
                     b.Property<DateTime>("UpdatedAtUtc")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<uint>("xmin")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
 
                     b.HasKey("Id");
 
@@ -242,6 +255,11 @@ namespace FamilyTrustFund.Infrastructure.Data.Migrations
                     b.Property<Guid>("GuarantorId")
                         .HasColumnType("uuid");
 
+                    b.Property<int>("GuarantorMode")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
                     b.Property<string>("HowItWorks")
                         .HasMaxLength(4000)
                         .HasColumnType("character varying(4000)");
@@ -298,10 +316,69 @@ namespace FamilyTrustFund.Infrastructure.Data.Migrations
 
                     b.HasIndex("GuarantorId");
 
-                    b.HasIndex("GuarantorId", "JoinCode")
+                    b.HasIndex("JoinCode")
                         .IsUnique();
 
                     b.ToTable("funds", (string)null);
+                });
+
+            modelBuilder.Entity("FamilyTrustFund.Domain.Funds.FundGuarantor", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("CommittedCapital")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("ExpiresAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("FundId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("GuarantorId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("InvitedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("InvitedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("InvitedEmail")
+                        .IsRequired()
+                        .HasMaxLength(320)
+                        .HasColumnType("character varying(320)");
+
+                    b.Property<DateTime?>("RespondedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Role")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("InvitedByUserId");
+
+                    b.HasIndex("FundId", "GuarantorId")
+                        .IsUnique();
+
+                    b.HasIndex("FundId", "Status");
+
+                    b.HasIndex("GuarantorId", "Status");
+
+                    b.ToTable("fund_guarantors", (string)null);
                 });
 
             modelBuilder.Entity("FamilyTrustFund.Domain.Loans.Loan", b =>
@@ -387,12 +464,21 @@ namespace FamilyTrustFund.Infrastructure.Data.Migrations
                     b.Property<int>("Status")
                         .HasColumnType("integer");
 
+                    b.Property<DateTime?>("TermsFrozenAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<decimal>("TotalRepayable")
                         .HasPrecision(18, 2)
                         .HasColumnType("numeric(18,2)");
 
                     b.Property<DateTime>("UpdatedAtUtc")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<uint>("xmin")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
 
                     b.HasKey("Id");
 
@@ -411,6 +497,41 @@ namespace FamilyTrustFund.Infrastructure.Data.Migrations
                     b.HasIndex("MemberId", "Status");
 
                     b.ToTable("loans", (string)null);
+                });
+
+            modelBuilder.Entity("FamilyTrustFund.Domain.Loans.LoanApproval", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Comment")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("DecidedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("GuarantorId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("LoanId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("GuarantorId", "Status");
+
+                    b.HasIndex("LoanId", "GuarantorId")
+                        .IsUnique();
+
+                    b.ToTable("loan_approvals", (string)null);
                 });
 
             modelBuilder.Entity("FamilyTrustFund.Domain.Membership.FundMember", b =>
@@ -737,10 +858,14 @@ namespace FamilyTrustFund.Infrastructure.Data.Migrations
                         .HasColumnType("numeric(18,2)");
 
                     b.Property<string>("ConfirmationNote")
-                        .HasColumnType("text");
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
 
                     b.Property<DateTime?>("ConfirmedAtUtc")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("ConfirmedByUserId")
+                        .HasColumnType("uuid");
 
                     b.Property<int>("Kind")
                         .HasColumnType("integer");
@@ -762,6 +887,9 @@ namespace FamilyTrustFund.Infrastructure.Data.Migrations
                     b.Property<DateTime?>("RejectedAtUtc")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<Guid?>("RejectedByUserId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("RejectionReason")
                         .HasMaxLength(1000)
                         .HasColumnType("character varying(1000)");
@@ -771,6 +899,12 @@ namespace FamilyTrustFund.Infrastructure.Data.Migrations
 
                     b.Property<int>("Status")
                         .HasColumnType("integer");
+
+                    b.Property<uint>("xmin")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
 
                     b.HasKey("Id");
 
@@ -1106,6 +1240,27 @@ namespace FamilyTrustFund.Infrastructure.Data.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("FamilyTrustFund.Domain.Funds.FundGuarantor", b =>
+                {
+                    b.HasOne("FamilyTrustFund.Domain.Funds.Fund", null)
+                        .WithMany()
+                        .HasForeignKey("FundId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("FamilyTrustFund.Infrastructure.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("GuarantorId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("FamilyTrustFund.Infrastructure.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("InvitedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("FamilyTrustFund.Domain.Loans.Loan", b =>
                 {
                     b.HasOne("FamilyTrustFund.Domain.Funds.Fund", null)
@@ -1123,6 +1278,21 @@ namespace FamilyTrustFund.Infrastructure.Data.Migrations
                         .WithMany()
                         .HasForeignKey("MemberId")
                         .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("FamilyTrustFund.Domain.Loans.LoanApproval", b =>
+                {
+                    b.HasOne("FamilyTrustFund.Infrastructure.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("GuarantorId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("FamilyTrustFund.Domain.Loans.Loan", null)
+                        .WithMany()
+                        .HasForeignKey("LoanId")
+                        .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
 

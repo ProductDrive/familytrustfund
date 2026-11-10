@@ -203,6 +203,13 @@ export function MemberContributionsPage() {
                   </td>
                   <td>
                     <StatusBadge status={c.status} withDot />
+                    {(c.confirmedByName || c.rejectedByName) && (
+                      <div className="cell-secondary" style={{ fontSize: 12, marginTop: 4 }}>
+                        {c.confirmedByName
+                          ? `Confirmed by ${c.confirmedByName}`
+                          : `Rejected by ${c.rejectedByName}`}
+                      </div>
+                    )}
                   </td>
                   <td className="cell-secondary">{c.reference ?? '—'}</td>
                   <td className="cell-secondary">

@@ -17,6 +17,20 @@ export type LoanFundingSource = 'GuarantorCapital' | 'FamilyCapital'
 
 export type FundType = 'Family' | 'External'
 
+export type FundGuarantorMode = 'Single' | 'Group'
+
+export type LoanApprovalStatus = 'Pending' | 'Approved' | 'Rejected' | 'Cancelled'
+
+/** One Guarantor's attributable decision on a loan (ADR-052). */
+export interface LoanApproval {
+  guarantorId: string
+  guarantorDisplayName: string
+  guarantorEmail: string
+  status: LoanApprovalStatus
+  decidedAtUtc: string | null
+  comment: string | null
+}
+
 export interface Loan {
   id: string
   fundId: string
@@ -44,6 +58,13 @@ export interface Loan {
   approvedAtUtc: string | null
   rejectedAtUtc: string | null
   cancelledAtUtc: string | null
+  fundGuarantorMode: FundGuarantorMode
+  fundOriginatorId: string
+  termsFrozen: boolean
+  requiredApprovalCount: number
+  approvedApprovalCount: number
+  rejectedApprovalCount: number
+  approvals: LoanApproval[]
 }
 
 export interface CancelLoanInput {

@@ -34,6 +34,7 @@ public class DisbursementServiceTests
                 CapitalFunding,
                 Loans,
                 Funds,
+                new FakeFundGuarantorRepository(Funds),
                 new RepaymentService(Repayments, Audit),
                 Audit);
         }

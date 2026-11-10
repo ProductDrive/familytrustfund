@@ -12,6 +12,18 @@ public sealed class FundDto
     public FundType Type { get; init; }
     public string JoinCode { get; init; } = string.Empty;
     public decimal CommittedCapital { get; init; }
+
+    /// <summary>
+    /// The Fund Originator. For a single-Guarantor fund this is the sole owner;
+    /// for a group fund it is the only Guarantor who may initiate disbursement
+    /// (ADR-051, ADR-053). Clients use it to gate originator-only actions; the
+    /// server enforces the rule regardless.
+    /// </summary>
+    public Guid GuarantorId { get; init; }
+
+    /// <summary>Single-Guarantor or Group Guarantor operation (ADR-051).</summary>
+    public FundGuarantorMode GuarantorMode { get; init; }
+
     public decimal ContributionMultiplier { get; init; }
     public decimal? InterestRate { get; init; }
     public int MinLoanTermMonths { get; init; }

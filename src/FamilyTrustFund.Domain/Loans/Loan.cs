@@ -75,6 +75,17 @@ public class Loan
     public DateTime CreatedAtUtc { get; private set; } = DateTime.UtcNow;
     public DateTime UpdatedAtUtc { get; private set; } = DateTime.UtcNow;
 
+    /// <summary>
+    /// When the agreed loan terms were frozen. In a Group Guarantor fund the
+    /// Fund Originator freezes the terms before the co-guarantors vote, so the
+    /// loan stays <see cref="LoanStatus.Pending"/> while terms are already fixed
+    /// (ADR-052). Null until terms are agreed.
+    /// </summary>
+    public DateTime? TermsFrozenAtUtc { get; private set; }
+
+    /// <summary>Whether the agreed terms have been frozen for voting.</summary>
+    public bool HasFrozenTerms => TermsFrozenAtUtc is not null;
+
     protected Loan() { }
 
     /// <summary>
@@ -146,9 +157,41 @@ public class Loan
         int repaymentTerm = 4,
         int? approvedTermMonths = null)
     {
+        FreezeApprovedTerms(
+            guarantorId,
+            approvedAmount,
+            approvedFrequency,
+            totalRepayable,
+            repaymentTerm,
+            approvedTermMonths);
+
+        Status = LoanStatus.Approved;
+        ApprovedAtUtc = DateTime.UtcNow;
+        Touch();
+    }
+
+    /// <summary>
+    /// Freezes the agreed loan terms without moving the loan out of
+    /// <see cref="LoanStatus.Pending"/>. In a Group Guarantor fund the Fund
+    /// Originator agrees the terms first and the loan is only approved once
+    /// every active Guarantor has voted (ADR-052).
+    /// </summary>
+    public void FreezeApprovedTerms(
+        Guid guarantorId,
+        decimal approvedAmount,
+        RepaymentFrequency approvedFrequency,
+        decimal totalRepayable,
+        int repaymentTerm = 4,
+        int? approvedTermMonths = null)
+    {
         if (Status != LoanStatus.Pending)
         {
-            throw new InvalidLoanException("Only pending loans can be approved.");
+            throw new InvalidLoanException("Only pending loans can have their terms agreed.");
+        }
+
+        if (HasFrozenTerms)
+        {
+            throw new InvalidLoanException("The loan terms have already been agreed for this request.");
         }
 
         if (approvedAmount <= 0)
@@ -178,6 +221,27 @@ public class Loan
         RepaymentTerm = repaymentTerm;
         TotalRepayable = totalRepayable;
         OutstandingBalance = approvedAmount;
+        TermsFrozenAtUtc = DateTime.UtcNow;
+        Touch();
+    }
+
+    /// <summary>
+    /// Moves a loan whose terms are already frozen to
+    /// <see cref="LoanStatus.Approved"/> after every required Guarantor has
+    /// approved (unanimity, ADR-052).
+    /// </summary>
+    public void CompleteUnanimousApproval()
+    {
+        if (Status != LoanStatus.Pending)
+        {
+            throw new InvalidLoanException("Only pending loans can be approved.");
+        }
+
+        if (!HasFrozenTerms)
+        {
+            throw new InvalidLoanException("The loan terms must be agreed before the loan can be approved.");
+        }
+
         Status = LoanStatus.Approved;
         ApprovedAtUtc = DateTime.UtcNow;
         Touch();

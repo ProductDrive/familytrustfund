@@ -16,11 +16,32 @@ public class Fund
     public const int AbsoluteMaxLoanTermMonths = 120;
 
     public Guid Id { get; private set; }
+
+    /// <summary>
+    /// The Fund Originator. For a single-Guarantor fund this is the sole owner;
+    /// for a Group Guarantor fund this is the Guarantor who created the fund and
+    /// is the only one who may initiate disbursement (ADR-051, ADR-053).
+    /// </summary>
     public Guid GuarantorId { get; private set; }
+
     public string Name { get; private set; } = string.Empty;
     public FundType Type { get; private set; }
     public string JoinCode { get; private set; } = string.Empty;
+
+    /// <summary>
+    /// The authoritative committed-capital figure used by the capacity
+    /// calculation (ADR-002, ADR-003). For a Group Guarantor fund this is the
+    /// aggregate of the active Guarantors' individual commitments.
+    /// </summary>
     public decimal CommittedCapital { get; private set; }
+
+    /// <summary>
+    /// Single-Guarantor or Group Guarantor operation. Immutable after creation.
+    /// Existing funds are single-Guarantor (ADR-051).
+    /// </summary>
+    public FundGuarantorMode GuarantorMode { get; private set; } = FundGuarantorMode.Single;
+
+    public bool IsGroupFund => GuarantorMode == FundGuarantorMode.Group;
 
     /// <summary>Family borrowing entitlement multiplier (Family funds only).</summary>
     public decimal ContributionMultiplier { get; private set; }
@@ -67,14 +88,21 @@ public class Fund
         decimal? contributionMultiplier = null,
         decimal? interestRate = null,
         int? minLoanTermMonths = null,
-        int? maxLoanTermMonths = null)
+        int? maxLoanTermMonths = null,
+        FundGuarantorMode guarantorMode = FundGuarantorMode.Single)
     {
+        if (guarantorId == Guid.Empty)
+        {
+            throw new InvalidFundException("A Guarantor is required to create a fund.");
+        }
+
         var fund = new Fund
         {
             Id = Guid.NewGuid(),
             GuarantorId = guarantorId,
             Type = type,
             Status = FundStatus.Active,
+            GuarantorMode = guarantorMode,
         };
         fund.Rename(name);
         fund.SetJoinCode(joinCode);
@@ -116,6 +144,50 @@ public class Fund
         }
 
         CommittedCapital = committedCapital;
+        Touch();
+    }
+
+    /// <summary>
+    /// Raises the fund's aggregate committed capital. Used when a Group
+    /// Guarantor joins or increases their own commitment (ADR-051).
+    /// </summary>
+    public void IncreaseCommittedCapital(decimal amount)
+    {
+        if (amount <= 0)
+        {
+            throw new InvalidFundException("An increase in committed capital must be greater than zero.");
+        }
+
+        CommittedCapital += amount;
+        Touch();
+    }
+
+    /// <summary>
+    /// Lowers the fund's aggregate committed capital, refusing any change that
+    /// would drop committed capital below the capital already disbursed and
+    /// still active. Committed capital is a planning figure (ADR-002), so it may
+    /// never shrink below money that is actually out.
+    /// </summary>
+    public void DecreaseCommittedCapital(decimal amount, decimal activeDisbursedLoans)
+    {
+        if (amount <= 0)
+        {
+            throw new InvalidFundException("A decrease in committed capital must be greater than zero.");
+        }
+
+        var remaining = CommittedCapital - amount;
+        if (remaining < 0)
+        {
+            throw new InvalidFundException("Committed capital cannot become negative.");
+        }
+
+        if (remaining < activeDisbursedLoans)
+        {
+            throw new InvalidFundException(
+                "Committed capital cannot be reduced below the capital already disbursed to active loans.");
+        }
+
+        CommittedCapital = remaining;
         Touch();
     }
 

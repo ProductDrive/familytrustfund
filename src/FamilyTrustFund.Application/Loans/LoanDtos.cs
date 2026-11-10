@@ -58,6 +58,9 @@ public sealed class ApproveLoanRequest
     /// member's request.
     /// </summary>
     public bool ConfirmedWithMember { get; init; }
+
+    /// <summary>Optional note recorded against this Guarantor's decision.</summary>
+    public string? Comment { get; init; }
 }
 
 /// <summary>
@@ -114,6 +117,38 @@ public sealed class LoanDto
     public DateTime? ApprovedAtUtc { get; init; }
     public DateTime? RejectedAtUtc { get; init; }
     public DateTime? CancelledAtUtc { get; init; }
+
+    /// <summary>Single-Guarantor or Group Guarantor fund (ADR-051).</summary>
+    public FundGuarantorMode FundGuarantorMode { get; init; }
+
+    /// <summary>The Fund Originator; only they may initiate disbursement (ADR-053).</summary>
+    public Guid FundOriginatorId { get; init; }
+
+    /// <summary>True once the group agreed the terms; they are immutable afterwards.</summary>
+    public bool TermsFrozen { get; init; }
+
+    /// <summary>Number of Guarantors who must decide this loan.</summary>
+    public int RequiredApprovalCount { get; init; }
+
+    /// <summary>Number of Guarantors who have approved.</summary>
+    public int ApprovedApprovalCount { get; init; }
+
+    /// <summary>Number of Guarantors who have rejected.</summary>
+    public int RejectedApprovalCount { get; init; }
+
+    /// <summary>Individual Guarantor decisions, attributable and auditable (ADR-052).</summary>
+    public IReadOnlyList<LoanApprovalDto> Approvals { get; init; } = Array.Empty<LoanApprovalDto>();
+}
+
+/// <summary>One Guarantor's decision on a loan, with display details.</summary>
+public sealed class LoanApprovalDto
+{
+    public Guid GuarantorId { get; init; }
+    public string GuarantorDisplayName { get; init; } = string.Empty;
+    public string GuarantorEmail { get; init; } = string.Empty;
+    public LoanApprovalStatus Status { get; init; }
+    public DateTime? DecidedAtUtc { get; init; }
+    public string? Comment { get; init; }
 }
 
 /// <summary>

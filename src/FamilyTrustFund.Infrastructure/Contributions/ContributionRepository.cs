@@ -1,5 +1,6 @@
 using FamilyTrustFund.Application.Contributions;
 using FamilyTrustFund.Domain.Contributions;
+using FamilyTrustFund.Domain.Funds;
 using FamilyTrustFund.Domain.Loans;
 using FamilyTrustFund.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
@@ -24,7 +25,12 @@ public class ContributionRepository : IContributionRepository
         await _db.FundContributions
             .Where(c => c.Status == ContributionStatus.PendingConfirmation)
             .Join(_db.Funds, c => c.FundId, f => f.Id, (c, f) => new { Contribution = c, Fund = f })
-            .Where(x => x.Fund.GuarantorId == guarantorId)
+            .Where(x =>
+                x.Fund.GuarantorId == guarantorId
+                || _db.FundGuarantors.Any(g =>
+                    g.FundId == x.Fund.Id
+                    && g.GuarantorId == guarantorId
+                    && g.Status == FundGuarantorStatus.Active))
             .Join(_db.Users, x => x.Contribution.MemberId, u => u.Id, (x, u) => new ContributionWithDetails
             {
                 Contribution = x.Contribution,

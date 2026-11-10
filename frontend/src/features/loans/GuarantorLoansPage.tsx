@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Check, X, BadgeCheck, AlertTriangle } from 'lucide-react'
+import { Check, X, BadgeCheck, AlertTriangle, Users } from 'lucide-react'
 import {
   useGuarantorPendingLoans,
   useApproveLoan,
@@ -18,6 +18,7 @@ import { EmptyState, SkeletonCard } from '../../components/ui/State'
 import { MoneyDisplay } from '../../lib/money'
 import { formatShortDate, formatShortDateTime } from '../../lib/formatDate'
 import { useDebouncedValue } from '../../lib/useDebouncedValue'
+import { useCurrentUser } from '../auth/authApi'
 import type {
   GuarantorLoanPreview,
   Loan,
@@ -86,10 +87,116 @@ function ApprovalPreview({ preview }: { preview?: GuarantorLoanPreview }) {
   )
 }
 
+function ApprovalProgress({ loan }: { loan: Loan }) {
+  if (loan.requiredApprovalCount <= 1) return null
+
+  return (
+    <section className="repayment-preview" aria-label="Guarantor approvals">
+      <h3>
+        <Users size={16} aria-hidden /> Approvals{' '}
+        {loan.approvedApprovalCount} of {loan.requiredApprovalCount}
+      </h3>
+      <p className="muted">
+        Every active Guarantor must approve this loan before it can be disbursed.
+        Any rejection rejects the request immediately.
+      </p>
+      <ul className="property-list">
+        {loan.approvals.map((approval) => (
+          <li key={approval.guarantorId}>
+            <span className="property-label">
+              {approval.guarantorDisplayName || approval.guarantorEmail}
+            </span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <StatusBadge status={approval.status} />
+              {approval.decidedAtUtc && (
+                <span className="cell-secondary" style={{ fontSize: 12 }}>
+                  {formatShortDateTime(approval.decidedAtUtc)}
+                </span>
+              )}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
+
+function FrozenTerms({ loan }: { loan: Loan }) {
+  const amount = loan.approvedAmount ?? loan.requestedAmount
+  const frequency = loan.approvedFrequency ?? loan.requestedFrequency
+  const term = loan.approvedTermMonths ?? loan.requestedTermMonths
+  const instalments =
+    loan.repaymentTerm > 0 ? loan.repaymentTerm : loan.requestedInstalments
+
+  return (
+    <section className="repayment-preview" aria-label="Agreed loan terms">
+      <h3>Agreed loan terms</h3>
+      <p className="muted">
+        The Fund Originator has agreed these terms. You are voting on them as they
+        stand — they can no longer be changed.
+      </p>
+      <ul className="property-list">
+        <li>
+          <span className="property-label">Approved amount</span>
+          <MoneyDisplay amount={amount} />
+        </li>
+        <li>
+          <span className="property-label">Repayment frequency</span>
+          <span className="property-value">{frequency}</span>
+        </li>
+        <li>
+          <span className="property-label">Repayment term</span>
+          <span className="property-value">
+            {term != null ? `${term} month(s)` : '—'}
+            {instalments != null ? ` · ${instalments} instalments` : ''}
+          </span>
+        </li>
+      </ul>
+    </section>
+  )
+}
+
+function RequestedTerms({ loan }: { loan: Loan }) {
+  return (
+    <section className="repayment-preview" aria-label="Member's requested terms">
+      <h3>Member&apos;s requested terms</h3>
+      <p className="muted">
+        Only the Fund Originator can change loan terms. You can approve the member&apos;s
+        request as it stands, or reject it.
+      </p>
+      <ul className="property-list">
+        <li>
+          <span className="property-label">Requested amount</span>
+          <MoneyDisplay amount={loan.requestedAmount} />
+        </li>
+        <li>
+          <span className="property-label">Repayment frequency</span>
+          <span className="property-value">{loan.requestedFrequency}</span>
+        </li>
+        <li>
+          <span className="property-label">Repayment term</span>
+          <span className="property-value">
+            {loan.requestedTermMonths != null
+              ? `${loan.requestedTermMonths} month(s)`
+              : '—'}
+            {loan.requestedInstalments != null
+              ? ` · ${loan.requestedInstalments} instalments`
+              : ''}
+          </span>
+        </li>
+      </ul>
+    </section>
+  )
+}
+
 function ApproveForm({ loan, onDone }: { loan: Loan; onDone: () => void }) {
   const approve = useApproveLoan()
   const reject = useRejectLoan()
   const navigate = useNavigate()
+  const { data: user } = useCurrentUser()
+
+  const isOriginator = user?.id === loan.fundOriginatorId
+  const canEditTerms = isOriginator && !loan.termsFrozen
 
   const initialTerm = loan.requestedTermMonths ?? 6
   const initialFrequency = loan.requestedFrequency
@@ -116,7 +223,7 @@ function ApproveForm({ loan, onDone }: { loan: Loan; onDone: () => void }) {
   const instalmentsNumber = Number(debouncedInstalments)
 
   const previewInput =
-    amountNumber > 0 && termNumber > 0 && instalmentsNumber > 0
+    canEditTerms && amountNumber > 0 && termNumber > 0 && instalmentsNumber > 0
       ? {
           loanId: loan.id,
           approvedAmount: amountNumber,
@@ -132,6 +239,12 @@ function ApproveForm({ loan, onDone }: { loan: Loan; onDone: () => void }) {
     amount !== debouncedAmount ||
     termMonths !== debouncedTerm ||
     instalments !== debouncedInstalments
+
+  const frozenAmount = loan.approvedAmount ?? loan.requestedAmount
+  const frozenFrequency = loan.approvedFrequency ?? loan.requestedFrequency
+  const frozenTerm = loan.approvedTermMonths ?? loan.requestedTermMonths ?? initialTerm
+  const frozenInstalments =
+    loan.repaymentTerm > 0 ? loan.repaymentTerm : initialInstalments
 
   function changeFrequency(next: RepaymentFrequency) {
     setFrequency(next)
@@ -150,120 +263,157 @@ function ApproveForm({ loan, onDone }: { loan: Loan; onDone: () => void }) {
   function submit(e: React.FormEvent) {
     e.preventDefault()
     if (mode === 'approve') {
-      const parsed = Number(amount)
-      const term = Number(termMonths)
-      const count = Number(instalments)
-      if (!parsed || parsed <= 0 || term <= 0 || count <= 0) return
-      if (previewStale || !preview.data?.preview.isValid) return
-      if (preview.data.termsChanged && !acknowledged) return
-      approve.mutate(
-        {
+      let input: Parameters<typeof approve.mutate>[0]
+
+      if (loan.termsFrozen) {
+        // Terms are already agreed; this is a yes/no vote.
+        input = {
+          loanId: loan.id,
+          approvedAmount: frozenAmount,
+          approvedFrequency: frozenFrequency,
+          approvedTermMonths: frozenTerm,
+          approvedInstalments: frozenInstalments,
+          confirmedWithMember: true,
+        }
+      } else if (!canEditTerms) {
+        // A co-guarantor can only approve the member's requested terms.
+        input = {
+          loanId: loan.id,
+          approvedAmount: loan.requestedAmount,
+          approvedFrequency: loan.requestedFrequency,
+          approvedTermMonths: loan.requestedTermMonths ?? initialTerm,
+          approvedInstalments: initialInstalments,
+          confirmedWithMember: false,
+        }
+      } else {
+        const parsed = Number(amount)
+        const term = Number(termMonths)
+        const count = Number(instalments)
+        if (!parsed || parsed <= 0 || term <= 0 || count <= 0) return
+        if (previewStale || !preview.data?.preview.isValid) return
+        if (preview.data.termsChanged && !acknowledged) return
+        input = {
           loanId: loan.id,
           approvedAmount: parsed,
           approvedFrequency: frequency,
           approvedTermMonths: term,
           approvedInstalments: count,
           confirmedWithMember: acknowledged,
-        },
-        {
-          onSuccess: () => {
-            onDone()
-            // Send the Guarantor straight to the disbursement page for this
-            // loan so the payout can be initiated immediately.
+        }
+      }
+
+      approve.mutate(input, {
+        onSuccess: (result) => {
+          onDone()
+          // Only the Fund Originator may disburse, and only once the loan is
+          // unanimously approved. Co-guarantors simply return to the queue.
+          if (result.status === 'Approved' && isOriginator) {
             navigate(`/guarantor/disburse?fund=${loan.fundId}&loan=${loan.id}`)
-          },
+          }
         },
-      )
+      })
     } else {
       reject.mutate({ loanId: loan.id, reason: rejectReason.trim() || null }, { onSuccess: onDone })
     }
   }
 
   const canApprove =
-    !!preview.data?.preview.isValid &&
-    !preview.isFetching &&
-    !previewStale &&
     !approve.isPending &&
-    (!termsChanged || acknowledged)
+    (loan.termsFrozen
+      ? true
+      : !canEditTerms
+        ? true
+        : !!preview.data?.preview.isValid &&
+          !preview.isFetching &&
+          !previewStale &&
+          (!termsChanged || acknowledged))
 
   return (
     <form onSubmit={submit}>
       {mode === 'approve' ? (
         <>
-          <div className="field">
-            <label htmlFor={`amount-${loan.id}`}>Approved amount (₦)</label>
-            <AmountInput
-              id={`amount-${loan.id}`}
-              value={amount}
-              onChange={(value) => {
-                setAmount(value)
-                setAcknowledged(false)
-              }}
-              required
-            />
-            <p className="field-hint">
-              Requested: <MoneyDisplay amount={loan.requestedAmount} />. You may approve a
-              different amount.
-            </p>
-          </div>
+          {canEditTerms ? (
+            <>
+              <div className="field">
+                <label htmlFor={`amount-${loan.id}`}>Approved amount (₦)</label>
+                <AmountInput
+                  id={`amount-${loan.id}`}
+                  value={amount}
+                  onChange={(value) => {
+                    setAmount(value)
+                    setAcknowledged(false)
+                  }}
+                  required
+                />
+                <p className="field-hint">
+                  Requested: <MoneyDisplay amount={loan.requestedAmount} />. You may approve a
+                  different amount.
+                </p>
+              </div>
 
-          <div className="field">
-            <label htmlFor={`freq-${loan.id}`}>Repayment frequency</label>
-            <select
-              id={`freq-${loan.id}`}
-              value={frequency}
-              onChange={(e) => changeFrequency(e.target.value as RepaymentFrequency)}
-            >
-              {FREQUENCIES.map((f) => (
-                <option key={f} value={f}>
-                  {f}
-                </option>
-              ))}
-            </select>
-            <p className="field-hint">
-              Requested: {loan.requestedFrequency}. You may adjust the repayment
-              frequency at approval.
-            </p>
-          </div>
+              <div className="field">
+                <label htmlFor={`freq-${loan.id}`}>Repayment frequency</label>
+                <select
+                  id={`freq-${loan.id}`}
+                  value={frequency}
+                  onChange={(e) => changeFrequency(e.target.value as RepaymentFrequency)}
+                >
+                  {FREQUENCIES.map((f) => (
+                    <option key={f} value={f}>
+                      {f}
+                    </option>
+                  ))}
+                </select>
+                <p className="field-hint">
+                  Requested: {loan.requestedFrequency}. You may adjust the repayment
+                  frequency at approval.
+                </p>
+              </div>
 
-          <div
-            className="grid"
-            style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}
-          >
-            <div className="field">
-              <label htmlFor={`term-${loan.id}`}>Repayment Term (months)</label>
-              <input
-                id={`term-${loan.id}`}
-                type="number"
-                min={preview.data?.preview.minTermMonths ?? 1}
-                max={preview.data?.preview.maxTermMonths ?? 120}
-                value={termMonths}
-                onChange={(e) => changeTerm(e.target.value)}
-                required
-              />
-              <p className="field-hint">
-                Requested: {loan.requestedTermMonths ?? '—'} month(s).
-              </p>
-            </div>
+              <div
+                className="grid"
+                style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}
+              >
+                <div className="field">
+                  <label htmlFor={`term-${loan.id}`}>Repayment Term (months)</label>
+                  <input
+                    id={`term-${loan.id}`}
+                    type="number"
+                    min={preview.data?.preview.minTermMonths ?? 1}
+                    max={preview.data?.preview.maxTermMonths ?? 120}
+                    value={termMonths}
+                    onChange={(e) => changeTerm(e.target.value)}
+                    required
+                  />
+                  <p className="field-hint">
+                    Requested: {loan.requestedTermMonths ?? '—'} month(s).
+                  </p>
+                </div>
 
-            <div className="field">
-              <label htmlFor={`instalments-${loan.id}`}>Number of instalments</label>
-              <input
-                id={`instalments-${loan.id}`}
-                type="number"
-                min={1}
-                value={instalments}
-                onChange={(e) => {
-                  setInstalments(e.target.value)
-                  setAcknowledged(false)
-                }}
-                required
-              />
-              <p className="field-hint">
-                Requested: {loan.requestedInstalments ?? '—'}.
-              </p>
-            </div>
-          </div>
+                <div className="field">
+                  <label htmlFor={`instalments-${loan.id}`}>Number of instalments</label>
+                  <input
+                    id={`instalments-${loan.id}`}
+                    type="number"
+                    min={1}
+                    value={instalments}
+                    onChange={(e) => {
+                      setInstalments(e.target.value)
+                      setAcknowledged(false)
+                    }}
+                    required
+                  />
+                  <p className="field-hint">
+                    Requested: {loan.requestedInstalments ?? '—'}.
+                  </p>
+                </div>
+              </div>
+            </>
+          ) : loan.termsFrozen ? (
+            <FrozenTerms loan={loan} />
+          ) : (
+            <RequestedTerms loan={loan} />
+          )}
 
           {previewInput && <ApprovalPreview preview={preview.data} />}
 
@@ -328,7 +478,11 @@ function ApproveForm({ loan, onDone }: { loan: Loan; onDone: () => void }) {
           {mode === 'approve'
             ? approve.isPending
               ? 'Approving…'
-              : 'Confirm approval'
+              : loan.termsFrozen
+                ? 'Approve these terms'
+                : canEditTerms
+                  ? 'Confirm approval'
+                  : 'Approve request'
             : reject.isPending
               ? 'Rejecting…'
               : 'Confirm rejection'}
@@ -349,6 +503,7 @@ function ApproveForm({ loan, onDone }: { loan: Loan; onDone: () => void }) {
 export function GuarantorLoansPage() {
   const { data: loans, isLoading, error } = useGuarantorPendingLoans()
   const cancel = useGuarantorCancelLoan()
+  const { data: user } = useCurrentUser()
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
 
   function toggle(id: string) {
@@ -429,6 +584,8 @@ export function GuarantorLoansPage() {
                   </li>
                 </ul>
 
+                <ApprovalProgress loan={l} />
+
                 <div style={{ marginTop: 16 }}>
                   {!open ? (
                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -441,21 +598,23 @@ export function GuarantorLoansPage() {
                       >
                         <X size={16} /> Reject
                       </Button>
-                      <Button
-                        variant="ghost"
-                        disabled={cancel.isPending}
-                        onClick={() => {
-                          if (
-                            window.confirm(
-                              `Cancel ${l.memberDisplayName}'s loan request for ${l.fundName}?`,
-                            )
-                          ) {
-                            cancel.mutate({ loanId: l.id })
-                          }
-                        }}
-                      >
-                        <X size={16} /> {cancel.isPending ? 'Cancelling…' : 'Cancel'}
-                      </Button>
+                      {l.fundOriginatorId === user?.id && (
+                        <Button
+                          variant="ghost"
+                          disabled={cancel.isPending}
+                          onClick={() => {
+                            if (
+                              window.confirm(
+                                `Cancel ${l.memberDisplayName}'s loan request for ${l.fundName}?`,
+                              )
+                            ) {
+                              cancel.mutate({ loanId: l.id })
+                            }
+                          }}
+                        >
+                          <X size={16} /> {cancel.isPending ? 'Cancelling…' : 'Cancel'}
+                        </Button>
+                      )}
                     </div>
                   ) : (
                     <ApproveForm loan={l} onDone={() => setExpanded(new Set())} />

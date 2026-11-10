@@ -8,7 +8,7 @@ namespace FamilyTrustFund.Tests.Funds;
 public class FundServiceTests
 {
     private static FundService CreateService(FakeFundRepository repo) =>
-        new(repo, new FakeAuditLog());
+        new(repo, new FakeFundGuarantorRepository(repo), new FakeFundAccessService(repo), new FakeAuditLog());
 
     [Fact]
     public async Task Create_generates_code_when_none_supplied()
@@ -66,7 +66,7 @@ public class FundServiceTests
     }
 
     [Fact]
-    public async Task Same_join_code_allowed_across_different_guarantors()
+    public async Task Join_code_is_globally_unique_across_guarantors()
     {
         var service = CreateService(new FakeFundRepository());
         await service.CreateFundAsync(Guid.NewGuid(), new CreateFundRequest
@@ -77,7 +77,7 @@ public class FundServiceTests
             JoinCode = "SHARECOD",
         });
 
-        var fund = await service.CreateFundAsync(Guid.NewGuid(), new CreateFundRequest
+        var act = async () => await service.CreateFundAsync(Guid.NewGuid(), new CreateFundRequest
         {
             Name = "B",
             Type = FundType.Family,
@@ -85,7 +85,8 @@ public class FundServiceTests
             JoinCode = "SHARECOD",
         });
 
-        fund.JoinCode.Should().Be("SHARECOD");
+        await act.Should().ThrowAsync<InvalidFundException>()
+            .WithMessage("*already in use*");
     }
 
     [Fact]
@@ -93,7 +94,8 @@ public class FundServiceTests
     {
         var repo = new FakeFundRepository();
         var audit = new FakeAuditLog();
-        var service = new FundService(repo, audit);
+        var service = new FundService(
+            repo, new FakeFundGuarantorRepository(repo), new FakeFundAccessService(repo), audit);
 
         await service.CreateFundAsync(Guid.NewGuid(), new CreateFundRequest
         {

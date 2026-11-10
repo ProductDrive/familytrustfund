@@ -39,8 +39,12 @@ builder.Services.AddDbContext<ApplicationDbContext>(options =>
 // ---- Application services ----
 builder.Services.AddScoped<FamilyTrustFund.Application.Audit.IAuditLog, FamilyTrustFund.Infrastructure.Audit.AuditLog>();
 builder.Services.AddScoped<FamilyTrustFund.Application.Funds.IFundRepository, FamilyTrustFund.Infrastructure.Funds.FundRepository>();
+builder.Services.AddScoped<FamilyTrustFund.Application.Funds.IFundGuarantorRepository, FamilyTrustFund.Infrastructure.Funds.FundGuarantorRepository>();
+builder.Services.AddScoped<FamilyTrustFund.Application.Funds.IFundAccessService, FamilyTrustFund.Infrastructure.Funds.FundAccessService>();
 builder.Services.AddScoped<FamilyTrustFund.Application.Funds.FundService>();
 builder.Services.AddScoped<FamilyTrustFund.Application.Funds.FundTransitionService>();
+builder.Services.AddScoped<FamilyTrustFund.Application.Funds.GuarantorNotificationService>();
+builder.Services.AddScoped<FamilyTrustFund.Application.Funds.FundGuarantorService>();
 builder.Services.AddScoped<FamilyTrustFund.Application.Membership.IMembershipRepository, FamilyTrustFund.Infrastructure.Membership.MembershipRepository>();
 builder.Services.AddScoped<FamilyTrustFund.Application.Membership.IGuarantorRoleChecker, FamilyTrustFund.Infrastructure.Identity.GuarantorRoleChecker>();
 builder.Services.AddScoped<FamilyTrustFund.Application.Membership.MembershipService>();

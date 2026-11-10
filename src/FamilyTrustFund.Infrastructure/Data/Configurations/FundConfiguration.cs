@@ -31,6 +31,11 @@ public class FundConfiguration : IEntityTypeConfiguration<Fund>
             .HasConversion<int>()
             .IsRequired();
 
+        builder.Property(f => f.GuarantorMode)
+            .HasConversion<int>()
+            .IsRequired()
+            .HasDefaultValue(FundGuarantorMode.Single);
+
         builder.Property(f => f.CommittedCapital)
             .HasPrecision(18, 2)
             .IsRequired();
@@ -65,7 +70,9 @@ public class FundConfiguration : IEntityTypeConfiguration<Fund>
         builder.Property(f => f.CreatedAtUtc).IsRequired();
         builder.Property(f => f.UpdatedAtUtc).IsRequired();
 
-        builder.HasIndex(f => new { f.GuarantorId, f.JoinCode }).IsUnique();
+        // Join codes identify a fund globally, so membership lookups can never be
+        // ambiguous between Guarantors (ADR-051).
+        builder.HasIndex(f => f.JoinCode).IsUnique();
         builder.HasIndex(f => f.GuarantorId);
     }
 }

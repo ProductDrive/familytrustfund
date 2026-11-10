@@ -30,8 +30,10 @@ public class ApplicationDbContext : IdentityDbContext<
     }
 
     public DbSet<Fund> Funds => Set<Fund>();
+    public DbSet<FundGuarantor> FundGuarantors => Set<FundGuarantor>();
     public DbSet<FundMember> FundMembers => Set<FundMember>();
     public DbSet<Loan> Loans => Set<Loan>();
+    public DbSet<LoanApproval> LoanApprovals => Set<LoanApproval>();
     public DbSet<FundContribution> FundContributions => Set<FundContribution>();
     public DbSet<PaymentRecipient> PaymentRecipients => Set<PaymentRecipient>();
     public DbSet<DisbursementTransaction> DisbursementTransactions => Set<DisbursementTransaction>();

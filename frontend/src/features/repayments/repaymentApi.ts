@@ -76,6 +76,8 @@ export interface PendingRepayment {
   confirmedAtUtc: string | null
   rejectedAtUtc: string | null
   hasEvidence: boolean
+  confirmedByName: string | null
+  rejectedByName: string | null
 }
 
 export interface DeclareRepaymentInput {

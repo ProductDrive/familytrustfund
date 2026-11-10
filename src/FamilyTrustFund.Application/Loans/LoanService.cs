@@ -15,26 +15,40 @@ namespace FamilyTrustFund.Application.Loans;
 /// calculations and eligibility checks are enforced server-side; clients only
 /// supply intent.
 /// </summary>
+/// <remarks>
+/// A Group Guarantor fund requires a unanimous decision from every active
+/// Guarantor before a loan is approved (ADR-052). Each Guarantor's decision is
+/// recorded on its own <see cref="LoanApproval"/> row, so it is attributable and
+/// a duplicate decision is impossible. The Fund Originator agrees the terms
+/// before (or at) the first approval; after that the terms are frozen. Any
+/// rejection rejects the whole request immediately.
+/// </remarks>
 public class LoanService
 {
     private readonly ILoanRepository _loanRepository;
     private readonly IFundRepository _fundRepository;
     private readonly IMembershipRepository _membershipRepository;
     private readonly IContributionRepository _contributionRepository;
+    private readonly IFundAccessService _fundAccess;
     private readonly IAuditLog _auditLog;
+    private readonly GuarantorNotificationService _notifications;
 
     public LoanService(
         ILoanRepository loanRepository,
         IFundRepository fundRepository,
         IMembershipRepository membershipRepository,
         IContributionRepository contributionRepository,
-        IAuditLog auditLog)
+        IFundAccessService fundAccess,
+        IAuditLog auditLog,
+        GuarantorNotificationService notifications)
     {
         _loanRepository = loanRepository;
         _fundRepository = fundRepository;
         _membershipRepository = membershipRepository;
         _contributionRepository = contributionRepository;
+        _fundAccess = fundAccess;
         _auditLog = auditLog;
+        _notifications = notifications;
     }
 
     /// <summary>
@@ -164,12 +178,34 @@ public class LoanService
             termMonths,
             instalments);
 
+        // The approval snapshot is fixed at request time: one required decision
+        // per active Guarantor. A single-Guarantor fund gets exactly one row, so
+        // both fund modes share the same decision code path (ADR-052).
+        var approverIds = await _fundAccess.GetRequiredApproverIdsAsync(fund, ct);
+        if (approverIds.Count == 0)
+        {
+            throw new InvalidLoanException("This fund has no Guarantor available to approve loans.");
+        }
+
         _loanRepository.Add(loan);
+        _loanRepository.AddApprovals(approverIds.Select(id => LoanApproval.Require(loan.Id, id)));
+
         await _auditLog.RecordAsync(memberId, "Loan.Requested", "Loan", loan.Id,
-            $"Amount={request.Amount}, Frequency={request.Frequency}, TermMonths={termMonths}, Instalments={instalments}", ct);
+            $"Amount={request.Amount}, Frequency={request.Frequency}, TermMonths={termMonths}, Instalments={instalments}, " +
+            $"RequiredApprovals={approverIds.Count}", ct);
         await _loanRepository.SaveChangesAsync(ct);
 
-        return ToLoanDto(loan, fund);
+        // Only group funds notify every approver; single-Guarantor funds keep
+        // their existing behaviour.
+        if (fund.IsGroupFund)
+        {
+            foreach (var approverId in approverIds)
+            {
+                await _notifications.LoanAwaitingDecisionAsync(fund, approverId, request.Amount, ct);
+            }
+        }
+
+        return await ToLoanDtoAsync(loan, fund, ct);
     }
 
     /// <summary>
@@ -226,7 +262,8 @@ public class LoanService
 
     /// <summary>
     /// Previews the Guarantor's proposed approval terms against the member's
-    /// original request, including the list of terms that changed.
+    /// original request, including the list of terms that changed. Once the
+    /// group has frozen the terms, the frozen terms are previewed instead.
     /// </summary>
     public async Task<GuarantorLoanPreviewDto> PreviewApprovalAsync(
         Guid guarantorId,
@@ -244,13 +281,40 @@ public class LoanService
         var fund = await _fundRepository.GetByIdAsync(loan.FundId, ct)
             ?? throw new InvalidLoanException("Fund not found.");
 
-        if (fund.GuarantorId != guarantorId)
+        if (!await _fundAccess.CanAccessFundAsync(fund, guarantorId, ct))
         {
             throw new InvalidLoanException("You do not have permission to approve this loan.");
         }
 
-        var (frequency, termMonths, instalments) = ResolveApprovedTerms(
-            loan, fund, request.ApprovedFrequency, request.ApprovedTermMonths, request.ApprovedInstalments);
+        decimal approvedAmount;
+        RepaymentFrequency frequency;
+        int termMonths;
+        int instalments;
+
+        if (loan.HasFrozenTerms)
+        {
+            approvedAmount = loan.ApprovedAmount ?? loan.RequestedAmount;
+            frequency = loan.ApprovedFrequency ?? loan.RequestedFrequency;
+            termMonths = loan.ApprovedTermMonths ?? loan.RequestedTermMonths ?? fund.MinLoanTermMonths;
+            instalments = loan.RepaymentTerm;
+        }
+        else
+        {
+            approvedAmount = request.ApprovedAmount > 0 ? request.ApprovedAmount : loan.RequestedAmount;
+            (frequency, termMonths, instalments) = ResolveApprovedTerms(
+                loan, fund, request.ApprovedFrequency, request.ApprovedTermMonths, request.ApprovedInstalments);
+
+            // Only the Fund Originator may change terms. A co-guarantor preview
+            // must therefore show the member's requested terms.
+            if (fund.GuarantorId != guarantorId)
+            {
+                var requestedTerms = ResolveApprovedTerms(
+                    loan, fund, loan.RequestedFrequency, loan.RequestedTermMonths ?? 0, loan.RequestedInstalments ?? 0);
+                frequency = requestedTerms.Frequency;
+                termMonths = requestedTerms.TermMonths;
+                instalments = requestedTerms.Instalments;
+            }
+        }
 
         var activeDisbursedTotal = await _loanRepository.SumActiveDisbursedByFundAsync(fund.Id, ct);
         var availableCapacity = FundFinancialRules.AvailableLendingCapacity(fund, activeDisbursedTotal);
@@ -266,7 +330,7 @@ public class LoanService
 
         var preview = BuildPreview(
             fund,
-            request.ApprovedAmount,
+            approvedAmount,
             frequency,
             termMonths,
             instalments,
@@ -276,7 +340,9 @@ public class LoanService
             fundCredit,
             borrowingEntitlement);
 
-        var changes = BuildChanges(loan, request.ApprovedAmount, frequency, termMonths, instalments);
+        var changes = loan.HasFrozenTerms
+            ? Array.Empty<LoanTermChangeDto>()
+            : BuildChanges(loan, approvedAmount, frequency, termMonths, instalments);
 
         return new GuarantorLoanPreviewDto
         {
@@ -287,9 +353,9 @@ public class LoanService
     }
 
     /// <summary>
-    /// Guarantor approves a pending loan request. The Guarantor may adjust the
-    /// approved amount and repayment frequency. The total repayable is
-    /// server-calculated based on the approved terms.
+    /// Guarantor records their decision on a pending loan request. The loan is
+    /// only approved once every required Guarantor has approved; any rejection
+    /// rejects the request immediately (ADR-052).
     /// </summary>
     public async Task<LoanDto> ApproveLoanAsync(
         Guid guarantorId,
@@ -307,81 +373,125 @@ public class LoanService
         var fund = await _fundRepository.GetByIdAsync(loan.FundId, ct)
             ?? throw new InvalidLoanException("Fund not found.");
 
-        if (fund.GuarantorId != guarantorId)
+        if (!await _fundAccess.CanAccessFundAsync(fund, guarantorId, ct))
         {
             throw new InvalidLoanException("You do not have permission to approve this loan.");
         }
 
-        var (frequency, termMonths, instalments) = ResolveApprovedTerms(
-            loan, fund, request.ApprovedFrequency, request.ApprovedTermMonths, request.ApprovedInstalments);
-
-        var termErrors = LoanTermRules.Validate(
-            termMonths, instalments, frequency, fund.MinLoanTermMonths, fund.MaxLoanTermMonths);
-        if (termErrors.Count > 0)
+        var approval = await GetApprovalForDecisionAsync(loan, fund, guarantorId, ct);
+        if (!approval.IsPending)
         {
-            throw new InvalidLoanException(string.Join(" ", termErrors));
+            throw new InvalidLoanException("You have already recorded a decision on this loan.");
         }
 
-        // Ensure approved amount is within available lending capacity.
-        var activeDisbursedTotal = await _loanRepository.SumActiveDisbursedByFundAsync(fund.Id, ct);
-        var availableCapacity = FundFinancialRules.AvailableLendingCapacity(fund, activeDisbursedTotal);
-
-        if (request.ApprovedAmount > availableCapacity)
+        if (loan.HasFrozenTerms)
         {
-            throw new InvalidLoanException(
-                $"Approved amount exceeds available lending capacity. Available: ₦{availableCapacity:N2}.");
+            // Terms are already agreed: this Guarantor is simply voting yes.
         }
-
-        // Family borrowing entitlement is enforced at approval too, because the
-        // Guarantor may change the amount.
-        if (fund.Type == FundType.Family)
+        else
         {
-            var fundCredit = await _contributionRepository.GetConfirmedFundCreditAsync(loan.MemberId, fund.Id, ct);
-            var entitlement = FundFinancialRules.FamilyBorrowingEntitlement(
-                fundCredit, fund.ContributionMultiplier);
+            var isOriginator = fund.GuarantorId == guarantorId;
+            var approvedAmount = request.ApprovedAmount > 0 ? request.ApprovedAmount : loan.RequestedAmount;
+            var (frequency, termMonths, instalments) = ResolveApprovedTerms(
+                loan, fund, request.ApprovedFrequency, request.ApprovedTermMonths, request.ApprovedInstalments);
 
-            if (request.ApprovedAmount > entitlement)
+            var changes = BuildChanges(loan, approvedAmount, frequency, termMonths, instalments);
+            if (!isOriginator && changes.Count > 0)
             {
                 throw new InvalidLoanException(
-                    $"Approved amount exceeds the member's borrowing entitlement of ₦{entitlement:N2}.");
+                    "Only the Fund Originator can change the loan terms. Approve the member's requested terms as they stand.");
+            }
+
+            var termErrors = LoanTermRules.Validate(
+                termMonths, instalments, frequency, fund.MinLoanTermMonths, fund.MaxLoanTermMonths);
+            if (termErrors.Count > 0)
+            {
+                throw new InvalidLoanException(string.Join(" ", termErrors));
+            }
+
+            await EnsureApprovalWithinLimitsAsync(fund, loan, approvedAmount, ct);
+
+            // Any change from the member's request must be acknowledged, because
+            // the terms are about to become immutable.
+            if (changes.Count > 0 && !request.ConfirmedWithMember)
+            {
+                throw new InvalidLoanException(
+                    "Approved terms differ from the member's request. Confirm the new arrangement with the borrower and acknowledge it before approving.");
+            }
+
+            var totalRepayable = CalculateTotalRepayable(approvedAmount, loan.InterestRate);
+
+            // The originator owns the agreed terms; a co-guarantor approving the
+            // member's request freezes the originator's request terms.
+            loan.FreezeApprovedTerms(
+                isOriginator ? guarantorId : fund.GuarantorId,
+                approvedAmount,
+                frequency,
+                totalRepayable,
+                instalments,
+                termMonths);
+        }
+
+        approval.Approve(request.Comment);
+
+        try
+        {
+            await _loanRepository.SaveChangesAsync(ct);
+        }
+        catch (LoanDecisionConflictException)
+        {
+            // Another Guarantor froze the terms at the same moment. The caller
+            // reloads and decides against the now-frozen terms.
+            throw new InvalidLoanException(
+                "Another Guarantor updated this loan at the same time. Reload the loan and try again.");
+        }
+
+        var approvals = await _loanRepository.GetApprovalsAsync(loan.Id, ct);
+        var finalisedNow = false;
+
+        if (loan.Status == LoanStatus.Pending && approvals.Count > 0 && approvals.All(a => a.IsApproved))
+        {
+            loan.CompleteUnanimousApproval();
+
+            try
+            {
+                await _loanRepository.SaveChangesAsync(ct);
+                finalisedNow = true;
+            }
+            catch (LoanDecisionConflictException)
+            {
+                // Another Guarantor completed the unanimous approval. The loan is
+                // already approved; return the committed state (idempotent).
             }
         }
 
-        // Any change from the member's request must be acknowledged, because the
-        // Guarantor is expected to have confirmed the new arrangement with them.
-        var changes = BuildChanges(loan, request.ApprovedAmount, frequency, termMonths, instalments);
-        if (changes.Count > 0 && !request.ConfirmedWithMember)
+        await _auditLog.RecordAsync(guarantorId, "Loan.ApprovalRecorded", "Loan", loan.Id,
+            $"ApprovedAmount={loan.ApprovedAmount}, ApprovedFrequency={loan.ApprovedFrequency}, " +
+            $"ApprovedTermMonths={loan.ApprovedTermMonths}, ApprovedInstalments={loan.RepaymentTerm}, " +
+            $"ConfirmedWithMember={request.ConfirmedWithMember}", ct);
+
+        var finalLoan = await _loanRepository.GetByIdAsNoTrackingAsync(loan.Id, ct) ?? loan;
+
+        if (finalisedNow && finalLoan.Status == LoanStatus.Approved)
         {
-            throw new InvalidLoanException(
-                "Approved terms differ from the member's request. Confirm the new arrangement with the borrower and acknowledge it before approving.");
+            await _auditLog.RecordAsync(guarantorId, "Loan.Approved", "Loan", finalLoan.Id,
+                $"ApprovedAmount={finalLoan.ApprovedAmount}, TotalRepayable={finalLoan.TotalRepayable}, " +
+                $"RequiredApprovals={approvals.Count}", ct);
+
+            await _notifications.LoanApprovedAsync(
+                fund,
+                finalLoan.MemberId,
+                finalLoan.ApprovedAmount ?? finalLoan.RequestedAmount,
+                ct);
         }
 
-        // Calculate total repayable: for Family funds, total repayable equals
-        // approved amount (no interest). For External funds, total repayable
-        // includes interest.
-        var totalRepayable = CalculateTotalRepayable(request.ApprovedAmount, loan.InterestRate);
-
-        loan.Approve(
-            guarantorId,
-            request.ApprovedAmount,
-            frequency,
-            totalRepayable,
-            instalments,
-            termMonths);
-
-        await _auditLog.RecordAsync(guarantorId, "Loan.Approved", "Loan", loan.Id,
-            $"RequestedAmount={loan.RequestedAmount}, RequestedFrequency={loan.RequestedFrequency}, " +
-            $"RequestedTermMonths={loan.RequestedTermMonths}, RequestedInstalments={loan.RequestedInstalments}; " +
-            $"ApprovedAmount={request.ApprovedAmount}, ApprovedFrequency={frequency}, " +
-            $"ApprovedTermMonths={termMonths}, ApprovedInstalments={instalments}, TotalRepayable={totalRepayable}, " +
-            $"ConfirmedWithMember={request.ConfirmedWithMember}", ct);
-        await _loanRepository.SaveChangesAsync(ct);
-
-        return ToLoanDto(loan, fund);
+        return await ToLoanDtoAsync(finalLoan, fund, ct);
     }
 
     /// <summary>
-    /// Guarantor rejects a pending loan request.
+    /// Guarantor rejects a pending loan request. In a group fund any single
+    /// rejection resolves the request immediately and closes the other
+    /// Guarantors' outstanding decisions.
     /// </summary>
     public async Task<LoanDto> RejectLoanAsync(
         Guid guarantorId,
@@ -399,18 +509,34 @@ public class LoanService
         var fund = await _fundRepository.GetByIdAsync(loan.FundId, ct)
             ?? throw new InvalidLoanException("Fund not found.");
 
-        if (fund.GuarantorId != guarantorId)
+        if (!await _fundAccess.CanAccessFundAsync(fund, guarantorId, ct))
         {
             throw new InvalidLoanException("You do not have permission to reject this loan.");
         }
 
+        var approval = await GetApprovalForDecisionAsync(loan, fund, guarantorId, ct);
+        if (!approval.IsPending)
+        {
+            throw new InvalidLoanException("You have already recorded a decision on this loan.");
+        }
+
+        approval.Reject(request.Reason);
         loan.Reject(guarantorId, request.Reason);
+
+        // Close every other outstanding decision: the request is resolved.
+        var approvals = await _loanRepository.GetApprovalsAsync(loan.Id, ct);
+        foreach (var other in approvals.Where(a => a.Id != approval.Id && a.IsPending))
+        {
+            other.Cancel();
+        }
 
         await _auditLog.RecordAsync(guarantorId, "Loan.Rejected", "Loan", loan.Id,
             request.Reason is not null ? $"Reason={request.Reason}" : null, ct);
         await _loanRepository.SaveChangesAsync(ct);
 
-        return ToLoanDto(loan, fund);
+        await _notifications.LoanRejectedAsync(fund, loan.MemberId, request.Reason, ct);
+
+        return await ToLoanDtoAsync(loan, fund, ct);
     }
 
     /// <summary>
@@ -435,18 +561,20 @@ public class LoanService
             ?? throw new InvalidLoanException("Fund not found.");
 
         loan.CancelByMember(memberId);
+        await CancelOutstandingApprovalsAsync(loan.Id, ct);
 
         await _auditLog.RecordAsync(memberId, "Loan.Cancelled", "Loan", loan.Id,
             "Cancelled pending loan request", ct);
         await _loanRepository.SaveChangesAsync(ct);
 
-        return ToLoanDto(loan, fund);
+        return await ToLoanDtoAsync(loan, fund, ct);
     }
 
     /// <summary>
-    /// Guarantor cancels a pending, approved, or disbursement-pending (not yet
-    /// disbursed) loan in one of their funds. Disbursed and completed loans can
-    /// never be cancelled.
+    /// Fund Originator cancels a pending, approved, or disbursement-pending (not
+    /// yet disbursed) loan in their fund. Disbursed and completed loans can never
+    /// be cancelled. Only the Fund Originator may cancel, even in a group fund
+    /// (ADR-051).
     /// </summary>
     public async Task<LoanDto> CancelLoanByGuarantorAsync(
         Guid guarantorId,
@@ -461,27 +589,32 @@ public class LoanService
 
         if (fund.GuarantorId != guarantorId)
         {
-            throw new InvalidLoanException("You do not have permission to cancel this loan.");
+            throw new InvalidLoanException(
+                fund.IsGroupFund
+                    ? "Only the Fund Originator can cancel a loan."
+                    : "You do not have permission to cancel this loan.");
         }
 
         loan.CancelByGuarantor(guarantorId);
+        await CancelOutstandingApprovalsAsync(loan.Id, ct);
 
         await _auditLog.RecordAsync(guarantorId, "Loan.Cancelled", "Loan", loan.Id,
             "Guarantor cancelled loan before disbursement", ct);
         await _loanRepository.SaveChangesAsync(ct);
 
-        return ToLoanDto(loan, fund);
+        return await ToLoanDtoAsync(loan, fund, ct);
     }
 
     /// <summary>
-    /// Returns pending loan requests for the Guarantor's review queue.
+    /// Returns pending loan requests for the Guarantor's review queue. A Group
+    /// Guarantor only sees loans where their own decision is still outstanding.
     /// </summary>
     public async Task<IReadOnlyList<LoanDto>> GetPendingRequestsForGuarantorAsync(
         Guid guarantorId,
         CancellationToken ct = default)
     {
         var items = await _loanRepository.GetPendingForGuarantorAsync(guarantorId, ct);
-        return items.Select(i => ToLoanDto(i.Loan, i.FundName, i.FundType, i.MemberDisplayName, i.MemberEmail)).ToList();
+        return await ToLoanDtosAsync(items, ct);
     }
 
     /// <summary>
@@ -492,12 +625,12 @@ public class LoanService
         CancellationToken ct = default)
     {
         var items = await _loanRepository.GetByFundAsync(fundId, ct);
-        return items.Select(i => ToLoanDto(i.Loan, i.FundName, i.FundType, i.MemberDisplayName, i.MemberEmail)).ToList();
+        return await ToLoanDtosAsync(items, ct);
     }
 
     /// <summary>
-    /// Returns a single loan only if the specified Guarantor owns the loan's fund.
-    /// Returns null otherwise (ownership-scoped lookup).
+    /// Returns a single loan only if the specified Guarantor may operate the
+    /// loan's fund (originator or active co-guarantor). Returns null otherwise.
     /// </summary>
     public async Task<LoanDto?> GetLoanByIdForGuarantorAsync(
         Guid guarantorId,
@@ -511,12 +644,12 @@ public class LoanService
         }
 
         var fund = await _fundRepository.GetByIdAsync(loan.FundId, ct);
-        if (fund is null || fund.GuarantorId != guarantorId)
+        if (fund is null || !await _fundAccess.CanAccessFundAsync(fund, guarantorId, ct))
         {
             return null;
         }
 
-        return ToLoanDto(loan, fund);
+        return await ToLoanDtoAsync(loan, fund, ct);
     }
 
     /// <summary>
@@ -527,7 +660,7 @@ public class LoanService
         CancellationToken ct = default)
     {
         var items = await _loanRepository.GetByMemberAsync(memberId, ct);
-        return items.Select(i => ToLoanDto(i.Loan, i.FundName, i.FundType, i.MemberDisplayName, i.MemberEmail)).ToList();
+        return await ToLoanDtosAsync(items, ct);
     }
 
     /// <summary>
@@ -597,6 +730,74 @@ public class LoanService
         // Simple interest: principal + (principal × rate / 100)
         var interest = Math.Round(principal * interestRate / 100m, 2, MidpointRounding.AwayFromZero);
         return principal + interest;
+    }
+
+    /// <summary>
+    /// Loads the caller's approval row, creating a fallback row for a legacy
+    /// single-Guarantor loan that predates the approval snapshot. Group funds
+    /// always have their rows, so a missing row is a permission failure.
+    /// </summary>
+    private async Task<LoanApproval> GetApprovalForDecisionAsync(
+        Loan loan,
+        Fund fund,
+        Guid guarantorId,
+        CancellationToken ct)
+    {
+        var approval = await _loanRepository.GetApprovalAsync(loan.Id, guarantorId, ct);
+        if (approval is not null)
+        {
+            return approval;
+        }
+
+        if (fund.IsGroupFund || fund.GuarantorId != guarantorId)
+        {
+            throw new InvalidLoanException("You are not a required approver for this loan.");
+        }
+
+        approval = LoanApproval.Require(loan.Id, guarantorId);
+        _loanRepository.AddApproval(approval);
+        return approval;
+    }
+
+    private async Task CancelOutstandingApprovalsAsync(Guid loanId, CancellationToken ct)
+    {
+        var approvals = await _loanRepository.GetApprovalsAsync(loanId, ct);
+        foreach (var approval in approvals.Where(a => a.IsPending))
+        {
+            approval.Cancel();
+        }
+    }
+
+    private async Task EnsureApprovalWithinLimitsAsync(
+        Fund fund,
+        Loan loan,
+        decimal approvedAmount,
+        CancellationToken ct)
+    {
+        // Ensure approved amount is within available lending capacity.
+        var activeDisbursedTotal = await _loanRepository.SumActiveDisbursedByFundAsync(fund.Id, ct);
+        var availableCapacity = FundFinancialRules.AvailableLendingCapacity(fund, activeDisbursedTotal);
+
+        if (approvedAmount > availableCapacity)
+        {
+            throw new InvalidLoanException(
+                $"Approved amount exceeds available lending capacity. Available: ₦{availableCapacity:N2}.");
+        }
+
+        // Family borrowing entitlement is enforced at approval too, because the
+        // Guarantor may change the amount.
+        if (fund.Type == FundType.Family)
+        {
+            var fundCredit = await _contributionRepository.GetConfirmedFundCreditAsync(loan.MemberId, fund.Id, ct);
+            var entitlement = FundFinancialRules.FamilyBorrowingEntitlement(
+                fundCredit, fund.ContributionMultiplier);
+
+            if (approvedAmount > entitlement)
+            {
+                throw new InvalidLoanException(
+                    $"Approved amount exceeds the member's borrowing entitlement of ₦{entitlement:N2}.");
+            }
+        }
     }
 
     /// <summary>
@@ -813,63 +1014,103 @@ public class LoanService
         return changes;
     }
 
-    private static LoanDto ToLoanDto(Loan loan, Fund fund) => new()
+    private async Task<LoanDto> ToLoanDtoAsync(Loan loan, Fund fund, CancellationToken ct)
     {
-        Id = loan.Id,
-        FundId = loan.FundId,
-        FundName = fund.Name,
-        FundType = fund.Type,
-        MemberId = loan.MemberId,
-        MemberDisplayName = string.Empty,
-        MemberEmail = string.Empty,
-        RequestedAmount = loan.RequestedAmount,
-        ApprovedAmount = loan.ApprovedAmount,
-        InterestRate = loan.InterestRate,
-        RequestedFrequency = loan.RequestedFrequency,
-        ApprovedFrequency = loan.ApprovedFrequency,
-        RequestedTermMonths = loan.RequestedTermMonths,
-        RequestedInstalments = loan.RequestedInstalments,
-        ApprovedTermMonths = loan.ApprovedTermMonths,
-        RepaymentTerm = loan.RepaymentTerm,
-        Status = loan.Status,
-        FundingSource = loan.FundingSource,
-        OutstandingBalance = loan.OutstandingBalance,
-        TotalRepayable = loan.TotalRepayable,
-        Purpose = loan.Purpose,
-        RejectionReason = loan.RejectionReason,
-        RequestedAtUtc = loan.RequestedAtUtc,
-        ApprovedAtUtc = loan.ApprovedAtUtc,
-        RejectedAtUtc = loan.RejectedAtUtc,
-        CancelledAtUtc = loan.CancelledAtUtc,
-    };
+        var approvals = await _loanRepository.GetApprovalsWithDetailsAsync(new[] { loan.Id }, ct);
+        return ToLoanDto(
+            loan,
+            fund.Name,
+            fund.Type,
+            string.Empty,
+            string.Empty,
+            fund.GuarantorMode,
+            fund.GuarantorId,
+            approvals);
+    }
 
-    private static LoanDto ToLoanDto(Loan loan, string fundName, Domain.Funds.FundType fundType, string memberDisplayName, string memberEmail) => new()
+    private async Task<IReadOnlyList<LoanDto>> ToLoanDtosAsync(
+        IReadOnlyList<LoanWithDetails> items,
+        CancellationToken ct)
     {
-        Id = loan.Id,
-        FundId = loan.FundId,
-        FundName = fundName,
-        FundType = fundType,
-        MemberId = loan.MemberId,
-        MemberDisplayName = memberDisplayName,
-        MemberEmail = memberEmail,
-        RequestedAmount = loan.RequestedAmount,
-        ApprovedAmount = loan.ApprovedAmount,
-        InterestRate = loan.InterestRate,
-        RequestedFrequency = loan.RequestedFrequency,
-        ApprovedFrequency = loan.ApprovedFrequency,
-        RequestedTermMonths = loan.RequestedTermMonths,
-        RequestedInstalments = loan.RequestedInstalments,
-        ApprovedTermMonths = loan.ApprovedTermMonths,
-        RepaymentTerm = loan.RepaymentTerm,
-        Status = loan.Status,
-        FundingSource = loan.FundingSource,
-        OutstandingBalance = loan.OutstandingBalance,
-        TotalRepayable = loan.TotalRepayable,
-        Purpose = loan.Purpose,
-        RejectionReason = loan.RejectionReason,
-        RequestedAtUtc = loan.RequestedAtUtc,
-        ApprovedAtUtc = loan.ApprovedAtUtc,
-        RejectedAtUtc = loan.RejectedAtUtc,
-        CancelledAtUtc = loan.CancelledAtUtc,
-    };
+        if (items.Count == 0)
+        {
+            return Array.Empty<LoanDto>();
+        }
+
+        var approvals = await _loanRepository.GetApprovalsWithDetailsAsync(
+            items.Select(i => i.Loan.Id).Distinct().ToList(),
+            ct);
+
+        var byLoan = approvals
+            .GroupBy(a => a.Approval.LoanId)
+            .ToDictionary(g => g.Key, g => (IReadOnlyList<LoanApprovalWithDetails>)g.ToList());
+
+        return items.Select(i => ToLoanDto(
+            i.Loan,
+            i.FundName,
+            i.FundType,
+            i.MemberDisplayName,
+            i.MemberEmail,
+            i.GuarantorMode,
+            i.GuarantorId,
+            byLoan.GetValueOrDefault(i.Loan.Id) ?? Array.Empty<LoanApprovalWithDetails>())).ToList();
+    }
+
+    private static LoanDto ToLoanDto(
+        Loan loan,
+        string fundName,
+        FundType fundType,
+        string memberDisplayName,
+        string memberEmail,
+        FundGuarantorMode guarantorMode,
+        Guid fundOriginatorId,
+        IReadOnlyList<LoanApprovalWithDetails> approvals)
+    {
+        var approvalDtos = approvals.Select(a => new LoanApprovalDto
+        {
+            GuarantorId = a.Approval.GuarantorId,
+            GuarantorDisplayName = a.GuarantorDisplayName,
+            GuarantorEmail = a.GuarantorEmail,
+            Status = a.Approval.Status,
+            DecidedAtUtc = a.Approval.DecidedAtUtc,
+            Comment = a.Approval.Comment,
+        }).ToList();
+
+        return new LoanDto
+        {
+            Id = loan.Id,
+            FundId = loan.FundId,
+            FundName = fundName,
+            FundType = fundType,
+            MemberId = loan.MemberId,
+            MemberDisplayName = memberDisplayName,
+            MemberEmail = memberEmail,
+            RequestedAmount = loan.RequestedAmount,
+            ApprovedAmount = loan.ApprovedAmount,
+            InterestRate = loan.InterestRate,
+            RequestedFrequency = loan.RequestedFrequency,
+            ApprovedFrequency = loan.ApprovedFrequency,
+            RequestedTermMonths = loan.RequestedTermMonths,
+            RequestedInstalments = loan.RequestedInstalments,
+            ApprovedTermMonths = loan.ApprovedTermMonths,
+            RepaymentTerm = loan.RepaymentTerm,
+            Status = loan.Status,
+            FundingSource = loan.FundingSource,
+            OutstandingBalance = loan.OutstandingBalance,
+            TotalRepayable = loan.TotalRepayable,
+            Purpose = loan.Purpose,
+            RejectionReason = loan.RejectionReason,
+            RequestedAtUtc = loan.RequestedAtUtc,
+            ApprovedAtUtc = loan.ApprovedAtUtc,
+            RejectedAtUtc = loan.RejectedAtUtc,
+            CancelledAtUtc = loan.CancelledAtUtc,
+            FundGuarantorMode = guarantorMode,
+            FundOriginatorId = fundOriginatorId,
+            TermsFrozen = loan.HasFrozenTerms,
+            RequiredApprovalCount = approvalDtos.Count,
+            ApprovedApprovalCount = approvalDtos.Count(a => a.Status == LoanApprovalStatus.Approved),
+            RejectedApprovalCount = approvalDtos.Count(a => a.Status == LoanApprovalStatus.Rejected),
+            Approvals = approvalDtos,
+        };
+    }
 }

@@ -20,6 +20,8 @@ export interface Contribution {
   confirmedAtUtc: string | null
   rejectedAtUtc: string | null
   hasEvidence: boolean
+  confirmedByName: string | null
+  rejectedByName: string | null
 }
 
 export interface ContributionSummary {

@@ -18,17 +18,20 @@ public class CapitalFundingService
 
     private readonly IFundRepository _fundRepository;
     private readonly ICapitalFundingRepository _capitalFundingRepository;
+    private readonly IFundAccessService _fundAccess;
     private readonly IPaymentProviderRegistry _providerRegistry;
     private readonly IAuditLog _auditLog;
 
     public CapitalFundingService(
         IFundRepository fundRepository,
         ICapitalFundingRepository capitalFundingRepository,
+        IFundAccessService fundAccess,
         IPaymentProviderRegistry providerRegistry,
         IAuditLog auditLog)
     {
         _fundRepository = fundRepository;
         _capitalFundingRepository = capitalFundingRepository;
+        _fundAccess = fundAccess;
         _providerRegistry = providerRegistry;
         _auditLog = auditLog;
     }
@@ -204,9 +207,12 @@ public class CapitalFundingService
         var fund = await _fundRepository.GetByIdAsync(fundId, ct)
             ?? throw new InvalidPaymentException("Fund not found.");
 
-        if (fund.GuarantorId != guarantorId)
+        if (!await _fundAccess.IsOriginatorAsync(fund.Id, guarantorId, ct))
         {
-            throw new InvalidPaymentException("You do not have permission to fund this fund.");
+            throw new InvalidPaymentException(
+                fund.IsGroupFund
+                    ? "Only the Fund Originator can fund this fund."
+                    : "You do not have permission to fund this fund.");
         }
 
         return fund;
@@ -229,7 +235,7 @@ public class CapitalFundingService
         var fund = await _fundRepository.GetByIdAsync(fundId, ct)
             ?? throw new InvalidPaymentException("Fund not found.");
 
-        if (fund.GuarantorId != guarantorId)
+        if (!await _fundAccess.IsOriginatorAsync(fund.Id, guarantorId, ct))
         {
             throw new InvalidPaymentException("You do not have permission to access this capital payment.");
         }

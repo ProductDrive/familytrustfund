@@ -38,6 +38,7 @@ public class DisbursementService
     private readonly ICapitalFundingRepository _capitalFundingRepository;
     private readonly ILoanRepository _loanRepository;
     private readonly IFundRepository _fundRepository;
+    private readonly IFundGuarantorRepository _guarantorRepository;
     private readonly RepaymentService _repaymentService;
     private readonly IAuditLog _auditLog;
 
@@ -47,6 +48,7 @@ public class DisbursementService
         ICapitalFundingRepository capitalFundingRepository,
         ILoanRepository loanRepository,
         IFundRepository fundRepository,
+        IFundGuarantorRepository guarantorRepository,
         RepaymentService repaymentService,
         IAuditLog auditLog)
     {
@@ -55,6 +57,7 @@ public class DisbursementService
         _capitalFundingRepository = capitalFundingRepository;
         _loanRepository = loanRepository;
         _fundRepository = fundRepository;
+        _guarantorRepository = guarantorRepository;
         _repaymentService = repaymentService;
         _auditLog = auditLog;
     }
@@ -208,7 +211,29 @@ public class DisbursementService
 
         if (fund.GuarantorId != guarantorId)
         {
-            throw new InvalidPaymentException("You do not have permission to disburse this loan.");
+            throw new InvalidPaymentException(fund.IsGroupFund
+                ? "Only the Fund Originator can initiate disbursement for this fund."
+                : "You do not have permission to disburse this loan.");
+        }
+
+        // A group fund must be operated by at least two active Guarantors, and
+        // every required Guarantor must have approved before money moves
+        // (ADR-052, ADR-053).
+        if (fund.IsGroupFund)
+        {
+            var activeCount = await _guarantorRepository.CountActiveAsync(fund.Id, ct);
+            if (activeCount < FundGuarantorService.MinActiveGuarantors)
+            {
+                throw new InvalidPaymentException(
+                    "A group fund needs at least two active Guarantors before it can disburse.");
+            }
+
+            var approvals = await _loanRepository.GetApprovalsAsync(loan.Id, ct);
+            if (approvals.Count == 0 || approvals.Any(a => !a.IsApproved))
+            {
+                throw new InvalidPaymentException(
+                    "Every active Guarantor must approve this loan before it can be disbursed.");
+            }
         }
 
         var recipient = await _paymentRepository.GetActiveRecipientForMemberAsync(loan.MemberId, ct);
@@ -406,7 +431,9 @@ public class DisbursementService
 
         if (fund.GuarantorId != guarantorId)
         {
-            throw new InvalidPaymentException("You do not have permission to cancel this disbursement.");
+            throw new InvalidPaymentException(fund.IsGroupFund
+                ? "Only the Fund Originator can cancel this disbursement."
+                : "You do not have permission to cancel this disbursement.");
         }
 
         if (loan.Status == LoanStatus.Disbursed || loan.Status == LoanStatus.Completed || loan.Status == LoanStatus.Defaulted)

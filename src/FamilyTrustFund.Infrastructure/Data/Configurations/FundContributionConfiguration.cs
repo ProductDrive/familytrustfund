@@ -27,10 +27,21 @@ public class FundContributionConfiguration : IEntityTypeConfiguration<FundContri
         builder.Property(c => c.Reference).HasMaxLength(200);
         builder.Property(c => c.Note).HasMaxLength(1000);
         builder.Property(c => c.RejectionReason).HasMaxLength(1000);
+        builder.Property(c => c.ConfirmationNote).HasMaxLength(1000);
+        builder.Property(c => c.ConfirmedByUserId);
+        builder.Property(c => c.RejectedByUserId);
 
         builder.Property(c => c.ReportedAtUtc).IsRequired();
         builder.Property(c => c.CreatedAtUtc).IsRequired();
         builder.Property(c => c.UpdatedAtUtc).IsRequired();
+
+        // Optimistic concurrency: two Group Guarantors must not both confirm the
+        // same contribution (ADR-054).
+        builder.Property<uint>("xmin")
+            .HasColumnName("xmin")
+            .HasColumnType("xid")
+            .ValueGeneratedOnAddOrUpdate()
+            .IsConcurrencyToken();
 
         // Indexes for common query patterns.
         builder.HasIndex(c => c.FundId);

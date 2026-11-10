@@ -320,7 +320,13 @@ export function MemberRepaymentPage() {
                           </div>
                           {p.rejectionReason && (
                             <p className="form-error" style={{ marginTop: 8 }}>
-                              Rejected: {p.rejectionReason}
+                              Rejected{p.rejectedByName ? ` by ${p.rejectedByName}` : ''}:{' '}
+                              {p.rejectionReason}
+                            </p>
+                          )}
+                          {!p.rejectionReason && p.rejectedByName && (
+                            <p className="form-error" style={{ marginTop: 8 }}>
+                              Rejected by {p.rejectedByName}
                             </p>
                           )}
                         </div>

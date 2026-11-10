@@ -1,3 +1,4 @@
+using FamilyTrustFund.Application.Funds;
 using FamilyTrustFund.Application.Loans;
 using FamilyTrustFund.Domain.Funds;
 using FamilyTrustFund.Domain.Loans;
@@ -12,12 +13,30 @@ public class LoanServiceTests
     private static readonly Guid GuarantorId = Guid.NewGuid();
     private static readonly Guid MemberId = Guid.NewGuid();
 
+    private static LoanService CreateService(
+        FakeLoanRepository loans,
+        FakeFundRepository funds,
+        FakeMembershipRepository members,
+        FakeContributionRepository contributions,
+        FakeAuditLog? audit = null)
+    {
+        var guarantors = new FakeFundGuarantorRepository(funds);
+        return new LoanService(
+            loans,
+            funds,
+            members,
+            contributions,
+            new FakeFundAccessService(funds, guarantors),
+            audit ?? new FakeAuditLog(),
+            new GuarantorNotificationService(new FakeEmailSender(), guarantors));
+    }
+
     private static (FakeFundRepository funds, FakeMembershipRepository members, FakeLoanRepository loans, LoanService service) Setup()
     {
         var funds = new FakeFundRepository();
         var members = new FakeMembershipRepository();
         var loans = new FakeLoanRepository();
-        var service = new LoanService(loans, funds, members, new FakeContributionRepository(), new FakeAuditLog());
+        var service = CreateService(loans, funds, members, new FakeContributionRepository());
         return (funds, members, loans, service);
     }
 
@@ -27,7 +46,7 @@ public class LoanServiceTests
         var members = new FakeMembershipRepository();
         var loans = new FakeLoanRepository();
         var contributions = new FakeContributionRepository();
-        var service = new LoanService(loans, funds, members, contributions, new FakeAuditLog());
+        var service = CreateService(loans, funds, members, contributions);
         return (funds, members, loans, contributions, service);
     }
 
@@ -657,7 +676,7 @@ public class LoanServiceTests
     {
         var (funds, members, loans, _) = Setup();
         var audit = new FakeAuditLog();
-        var service = new LoanService(loans, funds, members, new FakeContributionRepository(), audit);
+        var service = CreateService(loans, funds, members, new FakeContributionRepository(), audit);
         var fund = CreateFamilyFund();
         funds.Funds.Add(fund);
         AddActiveMembership(members, fund.Id, MemberId);
@@ -679,7 +698,7 @@ public class LoanServiceTests
         var (funds, members, loans, _) = Setup();
         var contributions = new FakeContributionRepository();
         var audit = new FakeAuditLog();
-        var service = new LoanService(loans, funds, members, contributions, audit);
+        var service = CreateService(loans, funds, members, contributions, audit);
         var fund = CreateFamilyFund();
         funds.Funds.Add(fund);
         AddActiveMembership(members, fund.Id, MemberId);
@@ -703,7 +722,7 @@ public class LoanServiceTests
     {
         var (funds, members, loans, contributions, _) = SetupExposeContributions();
         var audit = new FakeAuditLog();
-        var service = new LoanService(loans, funds, members, contributions, audit);
+        var service = CreateService(loans, funds, members, contributions, audit);
         var fund = CreateFamilyFund();
         funds.Funds.Add(fund);
         AddActiveMembership(members, fund.Id, MemberId);
@@ -730,7 +749,7 @@ public class LoanServiceTests
     {
         var (funds, members, loans, _) = Setup();
         var audit = new FakeAuditLog();
-        var service = new LoanService(loans, funds, members, new FakeContributionRepository(), audit);
+        var service = CreateService(loans, funds, members, new FakeContributionRepository(), audit);
         var fund = CreateFamilyFund();
         funds.Funds.Add(fund);
         AddActiveMembership(members, fund.Id, MemberId);

@@ -11,6 +11,12 @@ public interface ILoanRepository
     Task<Loan?> GetByIdAsync(Guid id, CancellationToken ct = default);
 
     /// <summary>
+    /// Loads a loan directly from the database, bypassing the change tracker.
+    /// Used to return the committed state after a concurrent decision conflict.
+    /// </summary>
+    Task<Loan?> GetByIdAsNoTrackingAsync(Guid id, CancellationToken ct = default);
+
+    /// <summary>
     /// Returns pending loan requests for funds owned by the specified Guarantor.
     /// Used for the Guarantor review queue.
     /// </summary>
@@ -46,9 +52,42 @@ public interface ILoanRepository
     /// </summary>
     Task<bool> HasPendingRequestAsync(Guid memberId, Guid fundId, CancellationToken ct = default);
 
+    /// <summary>
+    /// True when any loan in the fund is still awaiting Guarantor decisions.
+    /// Group membership changes are blocked while this is true (ADR-051).
+    /// </summary>
+    Task<bool> HasPendingInFundAsync(Guid fundId, CancellationToken ct = default);
+
+    Task<IReadOnlyList<LoanApproval>> GetApprovalsAsync(Guid loanId, CancellationToken ct = default);
+
+    Task<LoanApproval?> GetApprovalAsync(
+        Guid loanId,
+        Guid guarantorId,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// Approval rows for several loans with the deciding Guarantor's display
+    /// details, loaded in one query for list endpoints.
+    /// </summary>
+    Task<IReadOnlyList<LoanApprovalWithDetails>> GetApprovalsWithDetailsAsync(
+        IReadOnlyCollection<Guid> loanIds,
+        CancellationToken ct = default);
+
+    void AddApproval(LoanApproval approval);
+
+    void AddApprovals(IEnumerable<LoanApproval> approvals);
+
     void Add(Loan loan);
 
     Task SaveChangesAsync(CancellationToken ct = default);
+}
+
+/// <summary>One Guarantor's approval row plus display details.</summary>
+public sealed class LoanApprovalWithDetails
+{
+    public LoanApproval Approval { get; init; } = null!;
+    public string GuarantorDisplayName { get; init; } = string.Empty;
+    public string GuarantorEmail { get; init; } = string.Empty;
 }
 
 /// <summary>
@@ -64,4 +103,5 @@ public sealed class LoanWithDetails
     public string FundName { get; init; } = string.Empty;
     public FundType FundType { get; init; }
     public Guid GuarantorId { get; init; }
+    public FundGuarantorMode GuarantorMode { get; init; }
 }

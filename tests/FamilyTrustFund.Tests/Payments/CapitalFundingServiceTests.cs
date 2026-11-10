@@ -31,7 +31,8 @@ public class CapitalFundingServiceTests
         {
             var registry = new FakePaymentProviderRegistry();
             registry.ByName[Provider.Name] = Provider;
-            Service = new CapitalFundingService(Funds, CapitalFunding, registry, Audit);
+            Service = new CapitalFundingService(
+                Funds, CapitalFunding, new FakeFundAccessService(Funds), registry, Audit);
         }
 
         public Fund AddFund()

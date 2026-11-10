@@ -144,6 +144,21 @@ public sealed class PendingRepaymentDto
     public DateTime? ConfirmedAtUtc { get; init; }
     public DateTime? RejectedAtUtc { get; init; }
 
+    /// <summary>
+    /// The Guarantor who confirmed this repayment. In a group fund any active
+    /// Guarantor may confirm, so the decision actor is recorded (ADR-051).
+    /// </summary>
+    public Guid? ConfirmedByUserId { get; init; }
+
+    /// <summary>The Guarantor who rejected this repayment.</summary>
+    public Guid? RejectedByUserId { get; init; }
+
+    /// <summary>Display name of the Guarantor who confirmed; resolved server-side.</summary>
+    public string? ConfirmedByName { get; set; }
+
+    /// <summary>Display name of the Guarantor who rejected; resolved server-side.</summary>
+    public string? RejectedByName { get; set; }
+
     /// <summary>Whether the member uploaded payment evidence for this repayment.</summary>
     public bool HasEvidence { get; set; }
 }

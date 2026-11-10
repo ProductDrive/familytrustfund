@@ -1,5 +1,6 @@
 using FamilyTrustFund.Application.Contributions;
 using FamilyTrustFund.Application.Evidence;
+using FamilyTrustFund.Application.Funds;
 using FamilyTrustFund.Domain.Contributions;
 using FamilyTrustFund.Domain.Funds;
 using FamilyTrustFund.Domain.Membership;
@@ -13,6 +14,25 @@ public class ContributionServiceTests
     private static readonly Guid GuarantorId = Guid.NewGuid();
     private static readonly Guid MemberId = Guid.NewGuid();
 
+    private static ContributionService CreateService(
+        FakeContributionRepository contributions,
+        FakeFundRepository funds,
+        FakeMembershipRepository members,
+        FakeEvidenceRepository? evidence = null,
+        FakeAuditLog? audit = null,
+        FakeFundGuarantorRepository? guarantors = null)
+    {
+        var guarantorRepo = guarantors ?? new FakeFundGuarantorRepository(funds);
+        return new(
+            contributions,
+            funds,
+            members,
+            evidence ?? new FakeEvidenceRepository(),
+            new FakeFundAccessService(funds, guarantorRepo),
+            guarantorRepo,
+            audit ?? new FakeAuditLog());
+    }
+
     private static (
         FakeFundRepository funds,
         FakeMembershipRepository members,
@@ -22,7 +42,7 @@ public class ContributionServiceTests
         var funds = new FakeFundRepository();
         var members = new FakeMembershipRepository();
         var contributions = new FakeContributionRepository();
-        var service = new ContributionService(contributions, funds, members, new FakeEvidenceRepository(), new FakeAuditLog());
+        var service = CreateService(contributions, funds, members);
         return (funds, members, contributions, service);
     }
 
@@ -216,7 +236,7 @@ public class ContributionServiceTests
         var fund = CreateFamilyFund();
         funds.Funds.Add(fund);
         var contribution = FundContribution.Report(fund.Id, MemberId, 100m);
-        contribution.Confirm();
+        contribution.Confirm(GuarantorId);
         contributions.Contributions.Add(contribution);
 
         var act = async () => await service.ConfirmContributionAsync(GuarantorId, new ConfirmContributionRequest
@@ -271,7 +291,7 @@ public class ContributionServiceTests
         var members = new FakeMembershipRepository();
         var contributions = new FakeContributionRepository();
         var evidence = new FakeEvidenceRepository();
-        var service = new ContributionService(contributions, funds, members, evidence, new FakeAuditLog());
+        var service = CreateService(contributions, funds, members, evidence);
 
         var fund = CreateFamilyFund();
         funds.Funds.Add(fund);
@@ -324,5 +344,96 @@ public class ContributionServiceTests
         var summaries = await service.GetMyFundCreditAsync(MemberId);
 
         summaries.Single().BorrowingEntitlement.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Any_active_group_guarantor_can_confirm_and_the_actor_is_recorded()
+    {
+        var funds = new FakeFundRepository();
+        var members = new FakeMembershipRepository();
+        var contributions = new FakeContributionRepository();
+        var guarantors = new FakeFundGuarantorRepository(funds);
+        var coGuarantorId = Guid.NewGuid();
+
+        var fund = Fund.Create(
+            GuarantorId, "Family Group", FundType.Family, 1_000_000m, "GROUP123",
+            guarantorMode: FundGuarantorMode.Group);
+        funds.Funds.Add(fund);
+        guarantors.Add(FundGuarantor.CreateOriginator(fund.Id, GuarantorId, 1_000_000m));
+        var invite = FundGuarantor.Invite(fund.Id, coGuarantorId, "co@example.com", 0m, GuarantorId);
+        guarantors.Add(invite);
+        invite.Accept();
+        guarantors.Profiles[coGuarantorId] = new GuarantorProfile
+        {
+            Id = coGuarantorId,
+            DisplayName = "Co Guarantor",
+            Email = "co@example.com",
+        };
+
+        var service = new ContributionService(
+            contributions,
+            funds,
+            members,
+            new FakeEvidenceRepository(),
+            new FakeFundAccessService(funds, guarantors),
+            guarantors,
+            new FakeAuditLog());
+
+        var contribution = FundContribution.Report(fund.Id, MemberId, 100_000m);
+        contributions.Contributions.Add(contribution);
+
+        var result = await service.ConfirmContributionAsync(coGuarantorId, new ConfirmContributionRequest
+        {
+            ContributionId = contribution.Id,
+        });
+
+        result.Status.Should().Be(ContributionStatus.Confirmed);
+        result.ConfirmedByUserId.Should().Be(coGuarantorId);
+        result.ConfirmedByName.Should().Be("Co Guarantor");
+        contribution.ConfirmedByUserId.Should().Be(coGuarantorId);
+    }
+
+    [Fact]
+    public async Task A_second_guarantor_cannot_confirm_an_already_decided_contribution()
+    {
+        var funds = new FakeFundRepository();
+        var members = new FakeMembershipRepository();
+        var contributions = new FakeContributionRepository();
+        var guarantors = new FakeFundGuarantorRepository(funds);
+        var coGuarantorId = Guid.NewGuid();
+
+        var fund = Fund.Create(
+            GuarantorId, "Family Group", FundType.Family, 1_000_000m, "GROUP123",
+            guarantorMode: FundGuarantorMode.Group);
+        funds.Funds.Add(fund);
+        guarantors.Add(FundGuarantor.CreateOriginator(fund.Id, GuarantorId, 1_000_000m));
+        var invite = FundGuarantor.Invite(fund.Id, coGuarantorId, "co@example.com", 0m, GuarantorId);
+        guarantors.Add(invite);
+        invite.Accept();
+
+        var service = new ContributionService(
+            contributions,
+            funds,
+            members,
+            new FakeEvidenceRepository(),
+            new FakeFundAccessService(funds, guarantors),
+            guarantors,
+            new FakeAuditLog());
+
+        var contribution = FundContribution.Report(fund.Id, MemberId, 100_000m);
+        contributions.Contributions.Add(contribution);
+
+        await service.ConfirmContributionAsync(GuarantorId, new ConfirmContributionRequest
+        {
+            ContributionId = contribution.Id,
+        });
+
+        var act = () => service.ConfirmContributionAsync(coGuarantorId, new ConfirmContributionRequest
+        {
+            ContributionId = contribution.Id,
+        });
+
+        await act.Should().ThrowAsync<InvalidContributionException>();
+        contribution.ConfirmedByUserId.Should().Be(GuarantorId);
     }
 }

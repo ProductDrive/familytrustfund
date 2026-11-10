@@ -23,6 +23,8 @@ public class PendingRepaymentService
     private readonly ILoanRepository _loanRepository;
     private readonly IFundRepository _fundRepository;
     private readonly IEvidenceRepository _evidenceRepository;
+    private readonly IFundAccessService _fundAccess;
+    private readonly IFundGuarantorRepository _guarantorRepository;
     private readonly RepaymentService _repaymentService;
     private readonly IAuditLog _auditLog;
 
@@ -31,6 +33,8 @@ public class PendingRepaymentService
         ILoanRepository loanRepository,
         IFundRepository fundRepository,
         IEvidenceRepository evidenceRepository,
+        IFundAccessService fundAccess,
+        IFundGuarantorRepository guarantorRepository,
         RepaymentService repaymentService,
         IAuditLog auditLog)
     {
@@ -38,6 +42,8 @@ public class PendingRepaymentService
         _loanRepository = loanRepository;
         _fundRepository = fundRepository;
         _evidenceRepository = evidenceRepository;
+        _fundAccess = fundAccess;
+        _guarantorRepository = guarantorRepository;
         _repaymentService = repaymentService;
         _auditLog = auditLog;
     }
@@ -90,7 +96,7 @@ public class PendingRepaymentService
 
         var fund = await _fundRepository.GetByIdAsync(loan.FundId, ct);
         var dto = ToDto(pending, loan.FundId, fund?.Name ?? string.Empty, string.Empty, string.Empty);
-        return await WithHasEvidenceAsync(dto, ct);
+        return await WithDetailsAsync(dto, ct);
     }
 
     /// <summary>
@@ -104,7 +110,7 @@ public class PendingRepaymentService
         var results = new List<PendingRepaymentDto>();
         foreach (var item in items)
         {
-            results.Add(await WithHasEvidenceAsync(
+            results.Add(await WithDetailsAsync(
                 ToDto(item.Pending, item.FundId, item.FundName, item.MemberDisplayName, item.MemberEmail), ct));
         }
 
@@ -120,7 +126,7 @@ public class PendingRepaymentService
         var results = new List<PendingRepaymentDto>();
         foreach (var item in items)
         {
-            results.Add(await WithHasEvidenceAsync(
+            results.Add(await WithDetailsAsync(
                 ToDto(item.Pending, item.FundId, item.FundName, item.MemberDisplayName, item.MemberEmail), ct));
         }
 
@@ -143,7 +149,7 @@ public class PendingRepaymentService
         }
 
         var (fundName, fundId) = await ResolveFundAsync(pending.LoanId, ct);
-        return await WithHasEvidenceAsync(
+        return await WithDetailsAsync(
             ToDto(pending, fundId, fundName, string.Empty, string.Empty), ct);
     }
 
@@ -166,12 +172,12 @@ public class PendingRepaymentService
             ?? throw new InvalidRepaymentException("Loan not found.");
 
         var fund = await _fundRepository.GetByIdAsync(loan.FundId, ct);
-        if (fund is null || fund.GuarantorId != guarantorId)
+        if (fund is null || !await _fundAccess.CanAccessFundAsync(fund, guarantorId, ct))
         {
             return null;
         }
 
-        return await WithHasEvidenceAsync(
+        return await WithDetailsAsync(
             ToDto(pending, fund.Id, fund.Name, string.Empty, string.Empty), ct);
     }
 
@@ -194,14 +200,14 @@ public class PendingRepaymentService
         var fund = await _fundRepository.GetByIdAsync(loan.FundId, ct)
             ?? throw new InvalidRepaymentException("Fund not found.");
 
-        if (fund.GuarantorId != guarantorId)
+        if (!await _fundAccess.CanAccessFundAsync(fund, guarantorId, ct))
         {
             throw new InvalidRepaymentException("You do not have permission to confirm this repayment.");
         }
 
         // Guarded, idempotent transition: throws if no longer pending so a retry
         // can never double-post. Saved atomically with the ledger post below.
-        pending.Confirm(request.Note);
+        pending.Confirm(guarantorId, request.Note);
 
         await PostFinancialAsync(pending, ct);
         await MarkEvidenceReviewedAsync(pending.Id, guarantorId, ct);
@@ -214,7 +220,7 @@ public class PendingRepaymentService
         // confirmation, the posted Repayment ledger record, the loan balance and
         // the audit/evidence review atomically.
         var fundName = fund.Name;
-        var dto = await WithHasEvidenceAsync(ToDto(pending, fund.Id, fundName, string.Empty, string.Empty), ct);
+        var dto = await WithDetailsAsync(ToDto(pending, fund.Id, fundName, string.Empty, string.Empty), ct);
         return new ConfirmPendingRepaymentResult { Pending = dto, RepaymentPosted = true };
     }
 
@@ -236,19 +242,19 @@ public class PendingRepaymentService
         var fund = await _fundRepository.GetByIdAsync(loan.FundId, ct)
             ?? throw new InvalidRepaymentException("Fund not found.");
 
-        if (fund.GuarantorId != guarantorId)
+        if (!await _fundAccess.CanAccessFundAsync(fund, guarantorId, ct))
         {
             throw new InvalidRepaymentException("You do not have permission to reject this repayment.");
         }
 
-        pending.Reject(request.Reason);
+        pending.Reject(guarantorId, request.Reason);
 
         await MarkEvidenceReviewedAsync(pending.Id, guarantorId, ct);
         await _auditLog.RecordAsync(guarantorId, "Repayment.Rejected", "PendingRepayment", pending.Id,
             request.Reason is not null ? $"Reason={request.Reason}" : null, ct);
         await _pendingRepository.SaveChangesAsync(ct);
 
-        return await WithHasEvidenceAsync(
+        return await WithDetailsAsync(
             ToDto(pending, fund.Id, fund.Name, string.Empty, string.Empty), ct);
     }
 
@@ -300,10 +306,37 @@ public class PendingRepaymentService
         return (fund?.Name ?? string.Empty, fund?.Id ?? loan.FundId);
     }
 
-    private async Task<PendingRepaymentDto> WithHasEvidenceAsync(PendingRepaymentDto dto, CancellationToken ct)
+    private async Task<PendingRepaymentDto> WithDetailsAsync(PendingRepaymentDto dto, CancellationToken ct)
     {
         var evidence = await _evidenceRepository.GetForResourceAsync("Repayment", dto.Id, ct);
         dto.HasEvidence = evidence.Count > 0;
+
+        var actorIds = new[] { dto.ConfirmedByUserId, dto.RejectedByUserId }
+            .Where(id => id.HasValue)
+            .Select(id => id!.Value)
+            .Distinct()
+            .ToList();
+
+        if (actorIds.Count > 0)
+        {
+            var profiles = await _guarantorRepository.GetProfilesAsync(actorIds, ct);
+            if (dto.ConfirmedByUserId is { } confirmedBy
+                && profiles.TryGetValue(confirmedBy, out var confirmer))
+            {
+                dto.ConfirmedByName = string.IsNullOrWhiteSpace(confirmer.DisplayName)
+                    ? confirmer.Email
+                    : confirmer.DisplayName;
+            }
+
+            if (dto.RejectedByUserId is { } rejectedBy
+                && profiles.TryGetValue(rejectedBy, out var rejecter))
+            {
+                dto.RejectedByName = string.IsNullOrWhiteSpace(rejecter.DisplayName)
+                    ? rejecter.Email
+                    : rejecter.DisplayName;
+            }
+        }
+
         return dto;
     }
 
@@ -331,5 +364,7 @@ public class PendingRepaymentService
         ReportedAtUtc = p.ReportedAtUtc,
         ConfirmedAtUtc = p.ConfirmedAtUtc,
         RejectedAtUtc = p.RejectedAtUtc,
+        ConfirmedByUserId = p.ConfirmedByUserId,
+        RejectedByUserId = p.RejectedByUserId,
     };
 }

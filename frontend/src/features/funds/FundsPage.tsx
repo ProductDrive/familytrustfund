@@ -6,12 +6,20 @@ import {
   useFundTransitionStatus,
   useTransitionFund,
   useUpdateRepaymentAccount,
+  useFundGuarantors,
+  useInviteGuarantor,
+  useRevokeGuarantor,
+  useLeaveFund,
+  useUpdateGuarantorCommitment,
   type Fund,
+  type FundGuarantor,
+  type FundGuarantorMode,
   type FundType,
   type FundTransitionStatus,
 } from './fundApi'
 import { useFundMembers, useUpdateHowItWorks } from '../membership/membershipApi'
 import { useLendingCapacity } from '../loans/loanApi'
+import { useCurrentUser } from '../auth/authApi'
 import {
   useCapitalTransactions,
   useFundCapitalSummary,
@@ -31,6 +39,7 @@ function CreateFundForm() {
   const createFund = useCreateFund()
   const [name, setName] = useState('')
   const [type, setType] = useState<FundType>('Family')
+  const [guarantorMode, setGuarantorMode] = useState<FundGuarantorMode>('Single')
   const [committedCapital, setCommittedCapital] = useState('')
   const [interestRate, setInterestRate] = useState('')
   const [minTerm, setMinTerm] = useState('1')
@@ -52,6 +61,7 @@ function CreateFundForm() {
       {
         name: name.trim(),
         type,
+        guarantorMode,
         committedCapital: Number(committedCapital),
         interestRate: type === 'External' ? Number(interestRate) : null,
         minLoanTermMonths: Number(minTerm),
@@ -60,6 +70,7 @@ function CreateFundForm() {
       {
         onSuccess: () => {
           setName('')
+          setGuarantorMode('Single')
           setCommittedCapital('')
           setInterestRate('')
           setMinTerm('1')
@@ -70,6 +81,7 @@ function CreateFundForm() {
   }
 
   const isFamily = type === 'Family'
+  const isGroup = guarantorMode === 'Group'
 
   return (
     <Card title="Create a fund">
@@ -101,6 +113,22 @@ function CreateFundForm() {
           </p>
         </div>
         <div className="field">
+          <label htmlFor="fund-guarantor-mode">Who operates this fund?</label>
+          <select
+            id="fund-guarantor-mode"
+            value={guarantorMode}
+            onChange={(e) => setGuarantorMode(e.target.value as FundGuarantorMode)}
+          >
+            <option value="Single">Just me (single Guarantor)</option>
+            <option value="Group">A group of Guarantors</option>
+          </select>
+          <p className="field-hint">
+            {isGroup
+              ? 'You become the Fund Originator. You can invite other approved Guarantors to operate the fund jointly. This cannot be changed later.'
+              : 'Only you operate and approve loans for this fund. You can create a separate group fund later.'}
+          </p>
+        </div>
+        <div className="field">
           <label htmlFor="fund-capital">Committed capital (NGN)</label>
           <AmountInput
             id="fund-capital"
@@ -109,6 +137,11 @@ function CreateFundForm() {
             placeholder="e.g. 5,000,000"
             required
           />
+          <p className="field-hint">
+            A planning figure, not money deposited. {isGroup
+              ? 'Each Guarantor commits their own share after joining.'
+              : ''}
+          </p>
         </div>
         {!isFamily && (
           <div className="field">
@@ -309,6 +342,255 @@ function CapitalFundsPanel({ fund }: { fund: Fund }) {
   )
 }
 
+function FundGuarantorsPanel({ fund }: { fund: Fund }) {
+  const { data: user } = useCurrentUser()
+  const { data: guarantors, isLoading, error } = useFundGuarantors(fund.id)
+  const invite = useInviteGuarantor()
+  const revoke = useRevokeGuarantor()
+  const leave = useLeaveFund()
+  const updateCommitment = useUpdateGuarantorCommitment()
+
+  const [email, setEmail] = useState('')
+  const [inviteCommitment, setInviteCommitment] = useState('')
+  const [myCommitment, setMyCommitment] = useState('')
+
+  const isOriginator = user?.id === fund.guarantorId
+  const myMembership = guarantors?.find((g) => g.guarantorId === user?.id)
+  const activeCount = guarantors?.filter((g) => g.status === 'Active').length ?? 0
+  const commitmentValue =
+    myCommitment !== ''
+      ? myCommitment
+      : myMembership
+        ? String(myMembership.committedCapital)
+        : ''
+
+  function handleInvite(e: React.FormEvent) {
+    e.preventDefault()
+    if (!email.trim() || !inviteCommitment) return
+    invite.mutate(
+      {
+        fundId: fund.id,
+        email: email.trim(),
+        committedCapital: Number(inviteCommitment),
+      },
+      {
+        onSuccess: () => {
+          setEmail('')
+          setInviteCommitment('')
+        },
+      },
+    )
+  }
+
+  function handleCommitment(e: React.FormEvent) {
+    e.preventDefault()
+    if (!commitmentValue) return
+    updateCommitment.mutate(
+      { fundId: fund.id, committedCapital: Number(commitmentValue) },
+      { onSuccess: () => setMyCommitment('') },
+    )
+  }
+
+  return (
+    <section className="capital-panel" aria-label="Group Guarantors">
+      <div className="capital-header">
+        <div>
+          <h3>Group Guarantors</h3>
+          <p className="muted">
+            Every active Guarantor must approve a loan before it can be disbursed.
+            Only the Fund Originator can invite, remove or disburse.
+          </p>
+        </div>
+        <Badge tone="info">{activeCount} active</Badge>
+      </div>
+
+      {isLoading && <SkeletonCard />}
+      {error && <p className="error-text">{(error as Error).message}</p>}
+
+      {guarantors && (
+        <div className="member-list">
+          {guarantors.map((g) => (
+            <GuarantorRow
+              key={g.id}
+              guarantor={g}
+              isOriginator={isOriginator}
+              canRevoke={
+                isOriginator &&
+                !g.isOriginator &&
+                (g.status === 'Active' || g.status === 'Invited')
+              }
+              onRevoke={() => {
+                if (
+                  window.confirm(
+                    `Remove ${g.guarantorDisplayName || g.guarantorEmail} from ${fund.name}?`,
+                  )
+                ) {
+                  revoke.mutate({ fundId: fund.id, guarantorId: g.guarantorId })
+                }
+              }}
+              revokePending={revoke.isPending}
+            />
+          ))}
+        </div>
+      )}
+
+      {activeCount < 2 && (
+        <p className="field-hint">
+          At least two active Guarantors are required before this fund can disburse
+          a loan.
+        </p>
+      )}
+
+      {revoke.isError && (
+        <p className="form-error">{(revoke.error as Error).message}</p>
+      )}
+
+      {isOriginator && (
+        <form onSubmit={handleInvite} style={{ marginTop: 16 }}>
+          <div className="card-title" style={{ marginBottom: 4 }}>
+            <h4 style={{ margin: 0 }}>Invite a Guarantor</h4>
+          </div>
+          <p className="muted" style={{ marginTop: 0 }}>
+            They must already have an approved Guarantor account. Invitations expire
+            after 14 days and do not add capital until accepted.
+          </p>
+          <div
+            className="grid"
+            style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}
+          >
+            <div className="field">
+              <label htmlFor={`invite-email-${fund.id}`}>Guarantor email</label>
+              <input
+                id={`invite-email-${fund.id}`}
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="guarantor@example.com"
+                required
+              />
+            </div>
+            <div className="field">
+              <label htmlFor={`invite-commitment-${fund.id}`}>
+                Their committed capital (NGN)
+              </label>
+              <AmountInput
+                id={`invite-commitment-${fund.id}`}
+                value={inviteCommitment}
+                onChange={setInviteCommitment}
+                placeholder="e.g. 1,000,000"
+              />
+            </div>
+          </div>
+          {invite.isError && (
+            <p className="form-error">{(invite.error as Error).message}</p>
+          )}
+          {invite.isSuccess && (
+            <p className="muted">Invitation sent.</p>
+          )}
+          <Button type="submit" size="sm" disabled={invite.isPending}>
+            {invite.isPending ? 'Sending…' : 'Send invitation'}
+          </Button>
+        </form>
+      )}
+
+      {myMembership?.status === 'Active' && (
+        <form onSubmit={handleCommitment} style={{ marginTop: 16 }}>
+          <div className="field">
+            <label htmlFor={`my-commitment-${fund.id}`}>
+              Your committed capital (NGN)
+            </label>
+            <AmountInput
+              id={`my-commitment-${fund.id}`}
+              value={commitmentValue}
+              onChange={setMyCommitment}
+            />
+            <p className="field-hint">
+              A planning figure only. You cannot reduce it below the capital already
+              disbursed.
+            </p>
+          </div>
+          {updateCommitment.isError && (
+            <p className="form-error">{(updateCommitment.error as Error).message}</p>
+          )}
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <Button type="submit" variant="secondary" size="sm" disabled={updateCommitment.isPending}>
+              {updateCommitment.isPending ? 'Saving…' : 'Update my commitment'}
+            </Button>
+            {!isOriginator && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                disabled={leave.isPending}
+                onClick={() => {
+                  if (
+                    window.confirm(
+                      `Leave ${fund.name}? You will no longer be able to approve loans or disburse for this fund.`,
+                    )
+                  ) {
+                    leave.mutate(fund.id)
+                  }
+                }}
+              >
+                {leave.isPending ? 'Leaving…' : 'Leave fund'}
+              </Button>
+            )}
+          </div>
+          {leave.isError && (
+            <p className="form-error">{(leave.error as Error).message}</p>
+          )}
+        </form>
+      )}
+    </section>
+  )
+}
+
+function GuarantorRow({
+  guarantor,
+  isOriginator,
+  canRevoke,
+  onRevoke,
+  revokePending,
+}: {
+  guarantor: FundGuarantor
+  isOriginator: boolean
+  canRevoke: boolean
+  onRevoke: () => void
+  revokePending: boolean
+}) {
+  const expired = guarantor.status === 'Invited' && guarantor.isExpired
+  return (
+    <div className="member-row">
+      <Avatar name={guarantor.guarantorDisplayName || guarantor.guarantorEmail} size="sm" />
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div className="member-name">
+          {guarantor.guarantorDisplayName || guarantor.guarantorEmail}
+          {isOriginator && <span className="muted"> · You</span>}
+        </div>
+        <div className="member-email">{guarantor.guarantorEmail}</div>
+        <div className="member-email">
+          Committed: <MoneyDisplay amount={guarantor.committedCapital} />
+        </div>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        {guarantor.isOriginator && <Badge tone="info">Originator</Badge>}
+        <StatusBadge status={expired ? 'Expired' : guarantor.status} />
+        {canRevoke && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={revokePending}
+            onClick={onRevoke}
+          >
+            Remove
+          </Button>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function FundCard({ fund }: { fund: Fund }) {
   const [showMembers, setShowMembers] = useState(false)
   const [confirmOpen, setConfirmOpen] = useState(false)
@@ -336,6 +618,7 @@ function FundCard({ fund }: { fund: Fund }) {
       <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
         <Badge tone={isFamily ? 'info' : 'neutral'}>{fund.type}</Badge>
         <Badge tone="neutral">Code: {fund.joinCode}</Badge>
+        {fund.guarantorMode === 'Group' && <Badge tone="info">Group Guarantors</Badge>}
       </div>
 
       {isFamily && fund.status === 'Active' && (
@@ -379,6 +662,8 @@ function FundCard({ fund }: { fund: Fund }) {
           )
         )}
       </ul>
+
+      {fund.guarantorMode === 'Group' && <FundGuarantorsPanel fund={fund} />}
 
       {fund.status === 'Active' && (
         <CapitalFundsPanel fund={fund} />

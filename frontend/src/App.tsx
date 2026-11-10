@@ -4,6 +4,7 @@ import { AppShell } from './routes/AppShell'
 import { HomePage } from './routes/HomePage'
 import { LoginPage } from './routes/LoginPage'
 import { FundsPage } from './features/funds/FundsPage'
+import { GuarantorInvitationsPage } from './features/funds/GuarantorInvitationsPage'
 import { MemberLoansPage } from './features/loans/MemberLoansPage'
 import { GuarantorLoansPage } from './features/loans/GuarantorLoansPage'
 import { MemberContributionsPage } from './features/contributions/MemberContributionsPage'
@@ -93,6 +94,14 @@ export default function App() {
             element={
               <RequireRole roles={['Guarantor']}>
                 <GuarantorLoansPage />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="guarantor/invitations"
+            element={
+              <RequireRole roles={['Guarantor']}>
+                <GuarantorInvitationsPage />
               </RequireRole>
             }
           />

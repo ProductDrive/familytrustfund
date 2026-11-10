@@ -7,6 +7,7 @@ public class FundContributionTests
 {
     private static readonly Guid FundId = Guid.NewGuid();
     private static readonly Guid MemberId = Guid.NewGuid();
+    private static readonly Guid GuarantorId = Guid.NewGuid();
 
     [Fact]
     public void Report_creates_pending_contribution_with_correct_values()
@@ -56,10 +57,11 @@ public class FundContributionTests
     {
         var contribution = FundContribution.Report(FundId, MemberId, 100m);
 
-        contribution.Confirm();
+        contribution.Confirm(GuarantorId);
 
         contribution.Status.Should().Be(ContributionStatus.Confirmed);
         contribution.ConfirmedAtUtc.Should().NotBeNull();
+        contribution.ConfirmedByUserId.Should().Be(GuarantorId);
         contribution.IsConfirmed.Should().BeTrue();
     }
 
@@ -68,7 +70,7 @@ public class FundContributionTests
     {
         var contribution = FundContribution.Report(FundId, MemberId, 100m);
 
-        contribution.Confirm("  Verified with member  ");
+        contribution.Confirm(GuarantorId, "  Verified with member  ");
 
         contribution.ConfirmationNote.Should().Be("Verified with member");
     }
@@ -78,7 +80,7 @@ public class FundContributionTests
     {
         var contribution = FundContribution.Report(FundId, MemberId, 100m);
 
-        contribution.Confirm("   ");
+        contribution.Confirm(GuarantorId, "   ");
 
         contribution.ConfirmationNote.Should().BeNull();
     }
@@ -88,7 +90,7 @@ public class FundContributionTests
     {
         var contribution = FundContribution.Report(FundId, MemberId, 100m);
 
-        var act = () => contribution.Confirm(new string('x', 1001));
+        var act = () => contribution.Confirm(GuarantorId, new string('x', 1001));
 
         act.Should().Throw<InvalidContributionException>();
     }
@@ -105,9 +107,9 @@ public class FundContributionTests
     public void Confirm_already_confirmed_throws()
     {
         var contribution = FundContribution.Report(FundId, MemberId, 100m);
-        contribution.Confirm();
+        contribution.Confirm(GuarantorId);
 
-        var act = () => contribution.Confirm();
+        var act = () => contribution.Confirm(GuarantorId);
         act.Should().Throw<InvalidContributionException>();
     }
 
@@ -115,9 +117,9 @@ public class FundContributionTests
     public void Confirm_rejected_throws()
     {
         var contribution = FundContribution.Report(FundId, MemberId, 100m);
-        contribution.Reject("Duplicate");
+        contribution.Reject(GuarantorId, "Duplicate");
 
-        var act = () => contribution.Confirm();
+        var act = () => contribution.Confirm(GuarantorId);
         act.Should().Throw<InvalidContributionException>();
     }
 
@@ -126,11 +128,12 @@ public class FundContributionTests
     {
         var contribution = FundContribution.Report(FundId, MemberId, 100m);
 
-        contribution.Reject("Duplicate report");
+        contribution.Reject(GuarantorId, "Duplicate report");
 
         contribution.Status.Should().Be(ContributionStatus.Rejected);
         contribution.RejectionReason.Should().Be("Duplicate report");
         contribution.RejectedAtUtc.Should().NotBeNull();
+        contribution.RejectedByUserId.Should().Be(GuarantorId);
         contribution.IsConfirmed.Should().BeFalse();
     }
 
@@ -138,7 +141,7 @@ public class FundContributionTests
     public void Reject_without_reason_is_null()
     {
         var contribution = FundContribution.Report(FundId, MemberId, 100m);
-        contribution.Reject();
+        contribution.Reject(GuarantorId);
         contribution.RejectionReason.Should().BeNull();
     }
 
@@ -146,7 +149,7 @@ public class FundContributionTests
     public void Reject_overlong_reason_throws()
     {
         var contribution = FundContribution.Report(FundId, MemberId, 100m);
-        var act = () => contribution.Reject(new string('x', 1001));
+        var act = () => contribution.Reject(GuarantorId, new string('x', 1001));
         act.Should().Throw<InvalidContributionException>();
     }
 
@@ -154,9 +157,9 @@ public class FundContributionTests
     public void Reject_already_confirmed_throws()
     {
         var contribution = FundContribution.Report(FundId, MemberId, 100m);
-        contribution.Confirm();
+        contribution.Confirm(GuarantorId);
 
-        var act = () => contribution.Reject("Too late");
+        var act = () => contribution.Reject(GuarantorId, "Too late");
         act.Should().Throw<InvalidContributionException>();
     }
 }

@@ -13,7 +13,8 @@ public class FundTransitionServiceTests
         var funds = new FakeFundRepository();
         var contributions = new FakeContributionRepository();
         var audit = new FakeAuditLog();
-        var service = new FundTransitionService(funds, contributions, audit);
+        var service = new FundTransitionService(
+            funds, contributions, new FakeFundAccessService(funds), audit);
         return (service, funds, contributions, audit);
     }
 

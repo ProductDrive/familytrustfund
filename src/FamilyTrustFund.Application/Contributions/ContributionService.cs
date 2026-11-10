@@ -20,6 +20,8 @@ public class ContributionService
     private readonly IFundRepository _fundRepository;
     private readonly IMembershipRepository _membershipRepository;
     private readonly IEvidenceRepository _evidenceRepository;
+    private readonly IFundAccessService _fundAccess;
+    private readonly IFundGuarantorRepository _guarantorRepository;
     private readonly IAuditLog _auditLog;
 
     public ContributionService(
@@ -27,12 +29,16 @@ public class ContributionService
         IFundRepository fundRepository,
         IMembershipRepository membershipRepository,
         IEvidenceRepository evidenceRepository,
+        IFundAccessService fundAccess,
+        IFundGuarantorRepository guarantorRepository,
         IAuditLog auditLog)
     {
         _contributionRepository = contributionRepository;
         _fundRepository = fundRepository;
         _membershipRepository = membershipRepository;
         _evidenceRepository = evidenceRepository;
+        _fundAccess = fundAccess;
+        _guarantorRepository = guarantorRepository;
         _auditLog = auditLog;
     }
 
@@ -89,7 +95,7 @@ public class ContributionService
         await _contributionRepository.SaveChangesAsync(ct);
 
         var dto = ToDto(contribution, fund, memberDisplayName: string.Empty, memberEmail: string.Empty);
-        return await WithHasEvidenceAsync(dto, ct);
+        return await WithDetailsAsync(dto, ct);
     }
 
     /// <summary>
@@ -140,7 +146,7 @@ public class ContributionService
         var results = new List<ContributionDto>();
         foreach (var item in items)
         {
-            results.Add(await WithHasEvidenceAsync(
+            results.Add(await WithDetailsAsync(
                 ToDto(item.Contribution, item.FundName, item.MemberDisplayName, item.MemberEmail), ct));
         }
 
@@ -158,7 +164,7 @@ public class ContributionService
         var results = new List<ContributionDto>();
         foreach (var item in items)
         {
-            results.Add(await WithHasEvidenceAsync(
+            results.Add(await WithDetailsAsync(
                 ToDto(item.Contribution, item.FundName, item.MemberDisplayName, item.MemberEmail), ct));
         }
 
@@ -176,7 +182,7 @@ public class ContributionService
         var results = new List<ContributionDto>();
         foreach (var item in items)
         {
-            results.Add(await WithHasEvidenceAsync(
+            results.Add(await WithDetailsAsync(
                 ToDto(item.Contribution, item.FundName, item.MemberDisplayName, item.MemberEmail), ct));
         }
 
@@ -197,12 +203,12 @@ public class ContributionService
         var fund = await _fundRepository.GetByIdAsync(contribution.FundId, ct)
             ?? throw new InvalidContributionException("Fund not found.");
 
-        if (fund.GuarantorId != guarantorId)
+        if (!await _fundAccess.CanAccessFundAsync(fund, guarantorId, ct))
         {
             throw new InvalidContributionException("You do not have permission to confirm this contribution.");
         }
 
-        contribution.Confirm(request.Note);
+        contribution.Confirm(guarantorId, request.Note);
 
         await MarkEvidenceReviewedAsync(contribution.Id, guarantorId, ct);
         await _auditLog.RecordAsync(guarantorId, "Contribution.Confirmed", "Contribution", contribution.Id,
@@ -212,7 +218,7 @@ public class ContributionService
         await _contributionRepository.SaveChangesAsync(ct);
 
         var dto = ToDto(contribution, fund, string.Empty, string.Empty);
-        return await WithHasEvidenceAsync(dto, ct);
+        return await WithDetailsAsync(dto, ct);
     }
 
     /// <summary>
@@ -230,12 +236,12 @@ public class ContributionService
         var fund = await _fundRepository.GetByIdAsync(contribution.FundId, ct)
             ?? throw new InvalidContributionException("Fund not found.");
 
-        if (fund.GuarantorId != guarantorId)
+        if (!await _fundAccess.CanAccessFundAsync(fund, guarantorId, ct))
         {
             throw new InvalidContributionException("You do not have permission to reject this contribution.");
         }
 
-        contribution.Reject(request.Reason);
+        contribution.Reject(guarantorId, request.Reason);
 
         await MarkEvidenceReviewedAsync(contribution.Id, guarantorId, ct);
         await _auditLog.RecordAsync(guarantorId, "Contribution.Rejected", "Contribution", contribution.Id,
@@ -243,7 +249,7 @@ public class ContributionService
         await _contributionRepository.SaveChangesAsync(ct);
 
         var dto = ToDto(contribution, fund, string.Empty, string.Empty);
-        return await WithHasEvidenceAsync(dto, ct);
+        return await WithDetailsAsync(dto, ct);
     }
 
     /// <summary>
@@ -268,7 +274,7 @@ public class ContributionService
             return null;
         }
 
-        return await WithHasEvidenceAsync(ToDto(contribution, fund, string.Empty, string.Empty), ct);
+        return await WithDetailsAsync(ToDto(contribution, fund, string.Empty, string.Empty), ct);
     }
 
     /// <summary>
@@ -288,18 +294,45 @@ public class ContributionService
         }
 
         var fund = await _fundRepository.GetByIdAsync(contribution.FundId, ct);
-        if (fund is null || fund.GuarantorId != guarantorId)
+        if (fund is null || !await _fundAccess.CanAccessFundAsync(fund, guarantorId, ct))
         {
             return null;
         }
 
-        return await WithHasEvidenceAsync(ToDto(contribution, fund, string.Empty, string.Empty), ct);
+        return await WithDetailsAsync(ToDto(contribution, fund, string.Empty, string.Empty), ct);
     }
 
-    private async Task<ContributionDto> WithHasEvidenceAsync(ContributionDto dto, CancellationToken ct)
+    private async Task<ContributionDto> WithDetailsAsync(ContributionDto dto, CancellationToken ct)
     {
         var evidence = await _evidenceRepository.GetForResourceAsync("Contribution", dto.Id, ct);
         dto.HasEvidence = evidence.Count > 0;
+
+        var actorIds = new[] { dto.ConfirmedByUserId, dto.RejectedByUserId }
+            .Where(id => id.HasValue)
+            .Select(id => id!.Value)
+            .Distinct()
+            .ToList();
+
+        if (actorIds.Count > 0)
+        {
+            var profiles = await _guarantorRepository.GetProfilesAsync(actorIds, ct);
+            if (dto.ConfirmedByUserId is { } confirmedBy
+                && profiles.TryGetValue(confirmedBy, out var confirmer))
+            {
+                dto.ConfirmedByName = string.IsNullOrWhiteSpace(confirmer.DisplayName)
+                    ? confirmer.Email
+                    : confirmer.DisplayName;
+            }
+
+            if (dto.RejectedByUserId is { } rejectedBy
+                && profiles.TryGetValue(rejectedBy, out var rejecter))
+            {
+                dto.RejectedByName = string.IsNullOrWhiteSpace(rejecter.DisplayName)
+                    ? rejecter.Email
+                    : rejecter.DisplayName;
+            }
+        }
+
         return dto;
     }
 
@@ -337,6 +370,8 @@ public class ContributionService
         ReportedAtUtc = contribution.ReportedAtUtc,
         ConfirmedAtUtc = contribution.ConfirmedAtUtc,
         RejectedAtUtc = contribution.RejectedAtUtc,
+        ConfirmedByUserId = contribution.ConfirmedByUserId,
+        RejectedByUserId = contribution.RejectedByUserId,
     };
 
     private static ContributionDto ToDto(
@@ -360,5 +395,7 @@ public class ContributionService
         ReportedAtUtc = contribution.ReportedAtUtc,
         ConfirmedAtUtc = contribution.ConfirmedAtUtc,
         RejectedAtUtc = contribution.RejectedAtUtc,
+        ConfirmedByUserId = contribution.ConfirmedByUserId,
+        RejectedByUserId = contribution.RejectedByUserId,
     };
 }

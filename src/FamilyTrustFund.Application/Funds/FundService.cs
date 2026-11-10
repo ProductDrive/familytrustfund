@@ -10,11 +10,19 @@ namespace FamilyTrustFund.Application.Funds;
 public class FundService
 {
     private readonly IFundRepository _repository;
+    private readonly IFundGuarantorRepository _guarantorRepository;
+    private readonly IFundAccessService _fundAccess;
     private readonly IAuditLog _auditLog;
 
-    public FundService(IFundRepository repository, IAuditLog auditLog)
+    public FundService(
+        IFundRepository repository,
+        IFundGuarantorRepository guarantorRepository,
+        IFundAccessService fundAccess,
+        IAuditLog auditLog)
     {
         _repository = repository;
+        _guarantorRepository = guarantorRepository;
+        _fundAccess = fundAccess;
         _auditLog = auditLog;
     }
 
@@ -27,15 +35,15 @@ public class FundService
 
         if (string.IsNullOrWhiteSpace(joinCode))
         {
-            // Generate until we find one that is unique for this Guarantor.
+            // Join codes identify a fund globally, so generate until unique.
             do
             {
                 joinCode = JoinCodeGenerator.Generate();
-            } while (await _repository.JoinCodeExistsAsync(guarantorId, joinCode, ct));
+            } while (await _repository.JoinCodeExistsAsync(joinCode, ct));
         }
-        else if (await _repository.JoinCodeExistsAsync(guarantorId, joinCode, ct))
+        else if (await _repository.JoinCodeExistsAsync(joinCode, ct))
         {
-            throw new InvalidFundException("That join code is already in use for one of your funds.");
+            throw new InvalidFundException("That join code is already in use.");
         }
 
         var fund = Fund.Create(
@@ -47,12 +55,29 @@ public class FundService
             request.ContributionMultiplier,
             request.InterestRate,
             request.MinLoanTermMonths,
-            request.MaxLoanTermMonths);
+            request.MaxLoanTermMonths,
+            request.GuarantorMode);
 
         _repository.Add(fund);
+
+        // A Group Guarantor fund records the Fund Originator's own membership so
+        // the group always has a complete Guarantor list (ADR-051). A
+        // single-Guarantor fund creates no rows, preserving existing behaviour.
+        if (fund.IsGroupFund)
+        {
+            _guarantorRepository.Add(
+                FundGuarantor.CreateOriginator(fund.Id, guarantorId, request.CommittedCapital));
+        }
+
         await _auditLog.RecordAsync(guarantorId, "Fund.Created", "Fund", fund.Id,
-            $"MinLoanTermMonths={fund.MinLoanTermMonths}, MaxLoanTermMonths={fund.MaxLoanTermMonths}", ct);
+            $"GuarantorMode={fund.GuarantorMode}, MinLoanTermMonths={fund.MinLoanTermMonths}, MaxLoanTermMonths={fund.MaxLoanTermMonths}",
+            ct);
         await _repository.SaveChangesAsync(ct);
+
+        if (fund.IsGroupFund)
+        {
+            await _guarantorRepository.SaveChangesAsync(ct);
+        }
 
         return fund;
     }
@@ -61,12 +86,13 @@ public class FundService
         Guid guarantorId,
         CancellationToken ct = default)
     {
+        // Originator funds plus funds where the caller is an active co-guarantor.
         return await _repository.GetByGuarantorAsync(guarantorId, ct);
     }
 
     /// <summary>
-    /// Returns the fund only if it belongs to the supplied Guarantor.
-    /// This enforces resource ownership server-side.
+    /// Returns the fund only if the supplied Guarantor may operate it (originator
+    /// or active co-guarantor). This enforces resource ownership server-side.
     /// </summary>
     public async Task<Fund?> GetFundForGuarantorAsync(
         Guid guarantorId,
@@ -74,7 +100,12 @@ public class FundService
         CancellationToken ct = default)
     {
         var fund = await _repository.GetByIdAsync(fundId, ct);
-        return fund is null || fund.GuarantorId != guarantorId ? null : fund;
+        if (fund is null)
+        {
+            return null;
+        }
+
+        return await _fundAccess.CanAccessFundAsync(fund, guarantorId, ct) ? fund : null;
     }
 
     public async Task<Fund?> GetFundByIdAsync(Guid fundId, CancellationToken ct = default)

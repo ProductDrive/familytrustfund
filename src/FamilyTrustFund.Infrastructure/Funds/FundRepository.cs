@@ -22,17 +22,22 @@ public class FundRepository : IFundRepository
 
     public Task<List<Fund>> GetByGuarantorAsync(Guid guarantorId, CancellationToken ct = default) =>
         _db.Funds
-            .Where(f => f.GuarantorId == guarantorId)
+            .Where(f =>
+                // Originator of a single-Guarantor or group fund.
+                f.GuarantorId == guarantorId
+                // Active co-guarantor of a group fund (ADR-051).
+                || _db.FundGuarantors.Any(g =>
+                    g.FundId == f.Id
+                    && g.GuarantorId == guarantorId
+                    && g.Status == FundGuarantorStatus.Active))
             .OrderByDescending(f => f.CreatedAtUtc)
             .ToListAsync(ct);
 
     public Task<Fund?> GetByJoinCodeAsync(string joinCode, CancellationToken ct = default) =>
         _db.Funds.FirstOrDefaultAsync(f => f.JoinCode == joinCode.Trim().ToUpperInvariant(), ct);
 
-    public Task<bool> JoinCodeExistsAsync(Guid guarantorId, string joinCode, CancellationToken ct = default) =>
-        _db.Funds.AnyAsync(
-            f => f.GuarantorId == guarantorId && f.JoinCode == joinCode.Trim().ToUpperInvariant(),
-            ct);
+    public Task<bool> JoinCodeExistsAsync(string joinCode, CancellationToken ct = default) =>
+        _db.Funds.AnyAsync(f => f.JoinCode == joinCode.Trim().ToUpperInvariant(), ct);
 
     public void Add(Fund fund) => _db.Funds.Add(fund);
 

@@ -1,4 +1,5 @@
 using FamilyTrustFund.Application.Evidence;
+using FamilyTrustFund.Application.Funds;
 using FamilyTrustFund.Application.Loans;
 using FamilyTrustFund.Application.Repayments;
 using FamilyTrustFund.Domain.Funds;
@@ -23,12 +24,46 @@ public class PendingRepaymentServiceTests
         public FakeRepaymentRepository RepayRepo { get; } = new();
         public FakeEvidenceRepository EvidenceRepo { get; } = new();
         public FakePendingRepaymentRepository PendingRepo { get; } = new();
+        public FakeFundGuarantorRepository Guarantors { get; }
+        public Guid? CoGuarantorId { get; }
         public PendingRepaymentService Service { get; }
 
-        public Harness(decimal amount = 100_000m, int term = 4)
+        public Harness(
+            decimal amount = 100_000m,
+            int term = 4,
+            bool group = false,
+            Guid? coGuarantorId = null)
         {
-            Fund = Fund.Create(GuarantorId, "Aunties Fund", FundType.Family, 1_000_000m, "ABCD1234");
+            Guarantors = new FakeFundGuarantorRepository(FundRepo);
+
+            Fund = group
+                ? Fund.Create(
+                    GuarantorId, "Aunties Fund", FundType.Family, 1_000_000m, "ABCD1234",
+                    guarantorMode: FundGuarantorMode.Group)
+                : Fund.Create(GuarantorId, "Aunties Fund", FundType.Family, 1_000_000m, "ABCD1234");
             FundRepo.Funds.Add(Fund);
+
+            if (group)
+            {
+                Guarantors.Add(FundGuarantor.CreateOriginator(Fund.Id, GuarantorId, 1_000_000m));
+                var invite = FundGuarantor.Invite(
+                    Fund.Id, coGuarantorId!.Value, "co@example.com", 0m, GuarantorId);
+                Guarantors.Add(invite);
+                invite.Accept();
+                CoGuarantorId = coGuarantorId;
+                Guarantors.Profiles[GuarantorId] = new GuarantorProfile
+                {
+                    Id = GuarantorId,
+                    DisplayName = "Fund Originator",
+                    Email = "originator@example.com",
+                };
+                Guarantors.Profiles[coGuarantorId.Value] = new GuarantorProfile
+                {
+                    Id = coGuarantorId.Value,
+                    DisplayName = "Co Guarantor",
+                    Email = "co@example.com",
+                };
+            }
 
             Loan = Loan.Request(Fund.Id, MemberId, amount, RepaymentFrequency.Monthly, 10m, LoanFundingSource.GuarantorCapital);
             var totalRepayable = amount + amount * 0.10m;
@@ -42,7 +77,9 @@ public class PendingRepaymentServiceTests
 
             var repayService = new RepaymentService(RepayRepo, new FakeAuditLog());
             Service = new PendingRepaymentService(
-                PendingRepo, LoanRepo, FundRepo, EvidenceRepo, repayService, new FakeAuditLog());
+                PendingRepo, LoanRepo, FundRepo, EvidenceRepo,
+                new FakeFundAccessService(FundRepo, Guarantors), Guarantors,
+                repayService, new FakeAuditLog());
         }
 
         public async Task SeedScheduleAsync() =>
@@ -172,7 +209,9 @@ public class PendingRepaymentServiceTests
         });
 
         result.Pending.ConfirmationNote.Should().Be("Verified via statement");
+        result.Pending.ConfirmedByUserId.Should().Be(GuarantorId);
         h.PendingRepo.Items.Single().ConfirmationNote.Should().Be("Verified via statement");
+        h.PendingRepo.Items.Single().ConfirmedByUserId.Should().Be(GuarantorId);
     }
 
     [Fact]
@@ -267,6 +306,7 @@ public class PendingRepaymentServiceTests
 
         result.Status.Should().Be(PendingRepaymentStatus.Rejected);
         result.RejectionReason.Should().Be("Reference mismatch");
+        h.PendingRepo.Items.Single().RejectedByUserId.Should().Be(GuarantorId);
         h.RepayRepo.Repayments.Should().BeEmpty();
         h.Loan.OutstandingBalance.Should().Be(balanceBefore);
     }
@@ -293,5 +333,58 @@ public class PendingRepaymentServiceTests
 
         h.EvidenceRepo.Items.Single(i => i.Id == evidence.Id)
             .ReviewedByUserId.Should().Be(GuarantorId);
+    }
+
+    [Fact]
+    public async Task Any_active_group_guarantor_can_confirm_and_the_actor_is_recorded()
+    {
+        var coGuarantorId = Guid.NewGuid();
+        var h = new Harness(group: true, coGuarantorId: coGuarantorId);
+        await h.SeedScheduleAsync();
+        var pending = await h.Service.ReportAsync(MemberId, new ReportPendingRepaymentRequest
+        {
+            LoanId = h.Loan.Id,
+            Amount = 27_500m,
+            Kind = RepaymentKind.Scheduled,
+        });
+
+        var result = await h.Service.ConfirmAsync(coGuarantorId, new ConfirmPendingRepaymentRequest
+        {
+            PendingRepaymentId = pending.Id,
+        });
+
+        result.RepaymentPosted.Should().BeTrue();
+        result.Pending.Status.Should().Be(PendingRepaymentStatus.Confirmed);
+        result.Pending.ConfirmedByUserId.Should().Be(coGuarantorId);
+        result.Pending.ConfirmedByName.Should().Be("Co Guarantor");
+        h.PendingRepo.Items.Single().ConfirmedByUserId.Should().Be(coGuarantorId);
+    }
+
+    [Fact]
+    public async Task A_second_group_guarantor_cannot_confirm_the_same_repayment()
+    {
+        var coGuarantorId = Guid.NewGuid();
+        var h = new Harness(group: true, coGuarantorId: coGuarantorId);
+        await h.SeedScheduleAsync();
+        var pending = await h.Service.ReportAsync(MemberId, new ReportPendingRepaymentRequest
+        {
+            LoanId = h.Loan.Id,
+            Amount = 27_500m,
+            Kind = RepaymentKind.Scheduled,
+        });
+
+        await h.Service.ConfirmAsync(GuarantorId, new ConfirmPendingRepaymentRequest
+        {
+            PendingRepaymentId = pending.Id,
+        });
+
+        var act = () => h.Service.ConfirmAsync(coGuarantorId, new ConfirmPendingRepaymentRequest
+        {
+            PendingRepaymentId = pending.Id,
+        });
+
+        await act.Should().ThrowAsync<InvalidRepaymentException>()
+            .WithMessage("*Only a pending repayment*");
+        h.PendingRepo.Items.Single().ConfirmedByUserId.Should().Be(GuarantorId);
     }
 }

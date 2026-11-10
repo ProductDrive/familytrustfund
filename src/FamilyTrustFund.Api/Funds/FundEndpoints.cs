@@ -225,6 +225,204 @@ public static class FundEndpoints
             }
         });
 
+        // ── Group Guarantors (ADR-051) ────────────────────────────────────
+        //
+        // A group fund is operated by its Fund Originator plus every active
+        // co-guarantor. Membership changes are blocked by the service while a
+        // loan is awaiting decisions, so the approver set cannot shift mid-vote.
+
+        // Guarantors of a fund (originator or active co-guarantor).
+        group.MapGet("/{id:guid}/guarantors", async (
+            Guid id,
+            HttpContext http,
+            UserManager<ApplicationUser> userManager,
+            FundGuarantorService guarantorService,
+            CancellationToken ct) =>
+        {
+            var userId = UserId(http, userManager);
+            if (userId is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            var guarantors = await guarantorService.GetFundGuarantorsAsync(userId.Value, id, ct);
+            return guarantors is null ? Results.NotFound() : Results.Ok(guarantors);
+        });
+
+        // Invite an existing, approved Guarantor account (originator only).
+        group.MapPost("/{id:guid}/guarantors/invitations", async (
+            Guid id,
+            HttpContext http,
+            UserManager<ApplicationUser> userManager,
+            FundGuarantorService guarantorService,
+            [FromBody] InviteGuarantorRequest request,
+            CancellationToken ct) =>
+        {
+            var userId = UserId(http, userManager);
+            if (userId is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            try
+            {
+                var invitation = await guarantorService.InviteAsync(userId.Value, id, request, ct);
+                return Results.Created(
+                    $"/api/funds/{id}/guarantors/{invitation.GuarantorId}", invitation);
+            }
+            catch (InvalidFundGuarantorException ex)
+            {
+                return Results.BadRequest(new { message = ex.Message });
+            }
+        });
+
+        // Withdraw an invitation or remove an active co-guarantor (originator only).
+        group.MapDelete("/{id:guid}/guarantors/{guarantorId:guid}", async (
+            Guid id,
+            Guid guarantorId,
+            HttpContext http,
+            UserManager<ApplicationUser> userManager,
+            FundGuarantorService guarantorService,
+            CancellationToken ct) =>
+        {
+            var userId = UserId(http, userManager);
+            if (userId is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            try
+            {
+                var removed = await guarantorService.RevokeAsync(userId.Value, id, guarantorId, ct);
+                return Results.Ok(removed);
+            }
+            catch (InvalidFundGuarantorException ex)
+            {
+                return Results.BadRequest(new { message = ex.Message });
+            }
+        });
+
+        // Leave a group fund voluntarily (active co-guarantor only).
+        group.MapPost("/{id:guid}/guarantors/leave", async (
+            Guid id,
+            HttpContext http,
+            UserManager<ApplicationUser> userManager,
+            FundGuarantorService guarantorService,
+            CancellationToken ct) =>
+        {
+            var userId = UserId(http, userManager);
+            if (userId is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            try
+            {
+                await guarantorService.LeaveAsync(userId.Value, id, ct);
+                return Results.NoContent();
+            }
+            catch (InvalidFundGuarantorException ex)
+            {
+                return Results.BadRequest(new { message = ex.Message });
+            }
+        });
+
+        // Change the caller's own committed capital in a group fund.
+        group.MapPut("/{id:guid}/guarantors/me/commitment", async (
+            Guid id,
+            HttpContext http,
+            UserManager<ApplicationUser> userManager,
+            FundGuarantorService guarantorService,
+            [FromBody] UpdateGuarantorCommitmentRequest request,
+            CancellationToken ct) =>
+        {
+            var userId = UserId(http, userManager);
+            if (userId is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            try
+            {
+                var updated = await guarantorService.UpdateCommitmentAsync(
+                    userId.Value, id, request, ct);
+                return Results.Ok(updated);
+            }
+            catch (InvalidFundGuarantorException ex)
+            {
+                return Results.BadRequest(new { message = ex.Message });
+            }
+        });
+
+        // ── The caller's own invitations and group memberships ────────────
+
+        var invitationGroup = app.MapGroup("/api/guarantor/invitations")
+            .RequireAuthorization(Policy);
+
+        invitationGroup.MapGet("/", async (
+            HttpContext http,
+            UserManager<ApplicationUser> userManager,
+            FundGuarantorService guarantorService,
+            CancellationToken ct) =>
+        {
+            var userId = UserId(http, userManager);
+            if (userId is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            var invitations = await guarantorService.GetMineAsync(userId.Value, ct);
+            return Results.Ok(invitations);
+        });
+
+        invitationGroup.MapPost("/{membershipId:guid}/accept", async (
+            Guid membershipId,
+            HttpContext http,
+            UserManager<ApplicationUser> userManager,
+            FundGuarantorService guarantorService,
+            CancellationToken ct) =>
+        {
+            var userId = UserId(http, userManager);
+            if (userId is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            try
+            {
+                var accepted = await guarantorService.AcceptAsync(userId.Value, membershipId, ct);
+                return Results.Ok(accepted);
+            }
+            catch (InvalidFundGuarantorException ex)
+            {
+                return Results.BadRequest(new { message = ex.Message });
+            }
+        });
+
+        invitationGroup.MapPost("/{membershipId:guid}/decline", async (
+            Guid membershipId,
+            HttpContext http,
+            UserManager<ApplicationUser> userManager,
+            FundGuarantorService guarantorService,
+            CancellationToken ct) =>
+        {
+            var userId = UserId(http, userManager);
+            if (userId is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            try
+            {
+                var declined = await guarantorService.DeclineAsync(userId.Value, membershipId, ct);
+                return Results.Ok(declined);
+            }
+            catch (InvalidFundGuarantorException ex)
+            {
+                return Results.BadRequest(new { message = ex.Message });
+            }
+        });
+
         return app;
     }
 
@@ -246,6 +444,8 @@ internal static class FundDtoMapper
         Type = fund.Type,
         JoinCode = fund.JoinCode,
         CommittedCapital = fund.CommittedCapital,
+        GuarantorId = fund.GuarantorId,
+        GuarantorMode = fund.GuarantorMode,
         ContributionMultiplier = fund.ContributionMultiplier,
         InterestRate = fund.InterestRate,
         MinLoanTermMonths = fund.MinLoanTermMonths,

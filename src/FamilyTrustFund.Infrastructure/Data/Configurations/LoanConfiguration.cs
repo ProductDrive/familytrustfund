@@ -72,8 +72,17 @@ public class LoanConfiguration : IEntityTypeConfiguration<Loan>
         builder.Property(l => l.CancelledByUserId);
 
         builder.Property(l => l.RequestedAtUtc).IsRequired();
+        builder.Property(l => l.TermsFrozenAtUtc);
         builder.Property(l => l.CreatedAtUtc).IsRequired();
         builder.Property(l => l.UpdatedAtUtc).IsRequired();
+
+        // Optimistic concurrency: prevents two Guarantors racing to finalise the
+        // same loan (for example the last two unanimous approvals, ADR-052).
+        builder.Property<uint>("xmin")
+            .HasColumnName("xmin")
+            .HasColumnType("xid")
+            .ValueGeneratedOnAddOrUpdate()
+            .IsConcurrencyToken();
 
         // Indexes for common query patterns.
         builder.HasIndex(l => l.FundId);

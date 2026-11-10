@@ -14,15 +14,18 @@ public class FundTransitionService
 {
     private readonly IFundRepository _fundRepository;
     private readonly IContributionRepository _contributionRepository;
+    private readonly IFundAccessService _fundAccess;
     private readonly IAuditLog _auditLog;
 
     public FundTransitionService(
         IFundRepository fundRepository,
         IContributionRepository contributionRepository,
+        IFundAccessService fundAccess,
         IAuditLog auditLog)
     {
         _fundRepository = fundRepository;
         _contributionRepository = contributionRepository;
+        _fundAccess = fundAccess;
         _auditLog = auditLog;
     }
 
@@ -36,7 +39,7 @@ public class FundTransitionService
         CancellationToken ct = default)
     {
         var fund = await _fundRepository.GetByIdAsync(fundId, ct);
-        if (fund is null || fund.GuarantorId != guarantorId)
+        if (fund is null || !await _fundAccess.IsOriginatorAsync(fund.Id, guarantorId, ct))
         {
             return null;
         }
@@ -75,7 +78,7 @@ public class FundTransitionService
         CancellationToken ct = default)
     {
         var fund = await _fundRepository.GetByIdAsync(fundId, ct);
-        if (fund is null || fund.GuarantorId != guarantorId)
+        if (fund is null || !await _fundAccess.IsOriginatorAsync(fund.Id, guarantorId, ct))
         {
             return null;
         }

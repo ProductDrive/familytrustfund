@@ -30,6 +30,16 @@ public class PendingRepayment
     /// <summary>Optional free-text note added by the Guarantor when confirming.</summary>
     public string? ConfirmationNote { get; private set; }
 
+    /// <summary>
+    /// The Guarantor who confirmed this repayment. In a Group Guarantor fund any
+    /// one active Guarantor may confirm, so the decision must be attributable
+    /// (ADR-054).
+    /// </summary>
+    public Guid? ConfirmedByUserId { get; private set; }
+
+    /// <summary>The Guarantor who rejected this repayment.</summary>
+    public Guid? RejectedByUserId { get; private set; }
+
     public DateTime ReportedAtUtc { get; private set; }
     public DateTime? ConfirmedAtUtc { get; private set; }
     public DateTime? RejectedAtUtc { get; private set; }
@@ -83,11 +93,20 @@ public class PendingRepayment
     /// confirmed; this is the guard that makes confirmation idempotent
     /// (a retry can never double-post, AGENTS §2.7/§7).
     /// </summary>
-    public void Confirm(string? note = null)
+    /// <param name="confirmedByUserId">
+    /// The Guarantor recording the decision. Required so that a shared manual
+    /// confirmation is always attributable (ADR-054).
+    /// </param>
+    public void Confirm(Guid confirmedByUserId, string? note = null)
     {
         if (Status != PendingRepaymentStatus.PendingConfirmation)
         {
             throw new InvalidRepaymentException("Only a pending repayment can be confirmed.");
+        }
+
+        if (confirmedByUserId == Guid.Empty)
+        {
+            throw new InvalidRepaymentException("A confirming Guarantor is required.");
         }
 
         if (note is not null && note.Length > 1000)
@@ -96,6 +115,7 @@ public class PendingRepayment
         }
 
         ConfirmationNote = string.IsNullOrWhiteSpace(note) ? null : note.Trim();
+        ConfirmedByUserId = confirmedByUserId;
         Status = PendingRepaymentStatus.Confirmed;
         ConfirmedAtUtc = DateTime.UtcNow;
     }
@@ -104,15 +124,21 @@ public class PendingRepayment
     /// Guarantor rejects the repayment. A rejected repayment never posts to any
     /// ledger.
     /// </summary>
-    public void Reject(string? reason)
+    public void Reject(Guid rejectedByUserId, string? reason)
     {
         if (Status != PendingRepaymentStatus.PendingConfirmation)
         {
             throw new InvalidRepaymentException("Only a pending repayment can be rejected.");
         }
 
+        if (rejectedByUserId == Guid.Empty)
+        {
+            throw new InvalidRepaymentException("A rejecting Guarantor is required.");
+        }
+
         Status = PendingRepaymentStatus.Rejected;
         RejectionReason = reason;
+        RejectedByUserId = rejectedByUserId;
         RejectedAtUtc = DateTime.UtcNow;
     }
 }
