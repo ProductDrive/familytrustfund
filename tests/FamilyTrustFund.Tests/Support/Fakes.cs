@@ -697,6 +697,44 @@ public sealed class FakePendingRepaymentRepository : IPendingRepaymentRepository
     public Task SaveChangesAsync(CancellationToken ct = default) => Task.CompletedTask;
 }
 
+public sealed class FakeManualDisbursementRepository : IManualDisbursementRepository
+{
+    public List<ManualDisbursement> Items { get; } = new();
+
+    public List<ManualDisbursementWithDetails> Details { get; set; } = new();
+
+    public Task<ManualDisbursement?> GetByIdAsync(Guid id, CancellationToken ct = default) =>
+        Task.FromResult(Items.FirstOrDefault(r => r.Id == id));
+
+    public Task<ManualDisbursement?> GetLatestForLoanAsync(Guid loanId, CancellationToken ct = default) =>
+        Task.FromResult(Items
+            .Where(r => r.LoanId == loanId)
+            .OrderByDescending(r => r.ReportedAtUtc)
+            .FirstOrDefault());
+
+    public Task<ManualDisbursement?> GetLiveForLoanAsync(Guid loanId, CancellationToken ct = default) =>
+        Task.FromResult(Items
+            .Where(r => r.LoanId == loanId && r.IsLive)
+            .OrderByDescending(r => r.ReportedAtUtc)
+            .FirstOrDefault());
+
+    public Task<IReadOnlyList<ManualDisbursementWithDetails>> GetForGuarantorAsync(
+        Guid guarantorId,
+        CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<ManualDisbursementWithDetails>>(
+            Details.Where(d => d.GuarantorId == guarantorId).ToList());
+
+    public Task<IReadOnlyList<ManualDisbursementWithDetails>> GetForMemberAsync(
+        Guid memberId,
+        CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<ManualDisbursementWithDetails>>(
+            Details.Where(d => d.MemberId == memberId).ToList());
+
+    public void Add(ManualDisbursement report) => Items.Add(report);
+
+    public Task SaveChangesAsync(CancellationToken ct = default) => Task.CompletedTask;
+}
+
 public sealed class FakeLoginOtpRepository : ILoginOtpRepository
 {
     public List<LoginOtp> Items { get; } = new();

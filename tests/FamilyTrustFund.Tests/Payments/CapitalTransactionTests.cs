@@ -104,4 +104,31 @@ public class CapitalTransactionTests
         var act = () => CapitalTransaction.ComputeGrossForNet(0m);
         act.Should().Throw<InvalidPaymentException>();
     }
+
+    [Fact]
+    public void CreateManualConfirmed_records_confirmed_capital_with_no_fee()
+    {
+        var t = CapitalTransaction.CreateManualConfirmed(
+            FundId, LoanId, GuarantorId, 100_000m, "MANUAL-1");
+
+        t.Provider.Should().Be(CapitalTransaction.ManualProvider);
+        t.Status.Should().Be(CapitalTransactionStatus.Confirmed);
+        t.AmountGross.Should().Be(100_000m);
+        t.AmountNet.Should().Be(100_000m);
+        t.ProviderFee.Should().Be(0m);
+        t.ProviderReference.Should().Be("MANUAL-1");
+        t.CompletedAtUtc.Should().NotBeNull();
+    }
+
+    [Fact]
+    public void CreateManualConfirmed_rejects_invalid_input()
+    {
+        var act = () => CapitalTransaction.CreateManualConfirmed(
+            FundId, LoanId, GuarantorId, 0m, "MANUAL-1");
+        act.Should().Throw<InvalidPaymentException>();
+
+        var act2 = () => CapitalTransaction.CreateManualConfirmed(
+            FundId, LoanId, GuarantorId, 100m, " ");
+        act2.Should().Throw<InvalidPaymentException>();
+    }
 }

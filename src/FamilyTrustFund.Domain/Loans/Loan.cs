@@ -321,6 +321,25 @@ public class Loan
     }
 
     /// <summary>
+    /// Reverts a loan from <see cref="LoanStatus.DisbursementPending"/> back to
+    /// <see cref="LoanStatus.Approved"/> when a disbursement attempt is
+    /// abandoned before the member is settled — for example when a Guarantor
+    /// cancels an offline/manual disbursement report that the member never
+    /// confirmed (ADR-056). The loan returns to a state where another
+    /// disbursement can be attempted.
+    /// </summary>
+    public void RevertDisbursementPendingToApproved()
+    {
+        if (Status != LoanStatus.DisbursementPending)
+        {
+            throw new InvalidLoanException("Only a disbursement-pending loan can be returned to approved.");
+        }
+
+        Status = LoanStatus.Approved;
+        Touch();
+    }
+
+    /// <summary>
     /// Confirms successful disbursement after provider webhook confirmation.
     /// Do not call this merely because the API request succeeded.
     /// </summary>

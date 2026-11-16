@@ -21,6 +21,9 @@ public class EvidenceService
     /// <summary>Container name used for repayment evidence.</summary>
     public const string RepaymentContainer = "repayment";
 
+    /// <summary>Container name used for offline-disbursement proof of payment.</summary>
+    public const string DisbursementContainer = "disbursement";
+
     private const long MaxFileSizeBytes = 5 * 1024 * 1024; // 5 MB
 
     private static readonly HashSet<string> AllowedContentTypes = new(StringComparer.OrdinalIgnoreCase)
@@ -161,6 +164,7 @@ public class EvidenceService
     {
         "contribution" => ContributionContainer,
         "repayment" => RepaymentContainer,
+        "disbursement" => DisbursementContainer,
         _ => resourceType.ToLowerInvariant(),
     };
 

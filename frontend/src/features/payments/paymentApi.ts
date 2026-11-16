@@ -191,3 +191,140 @@ export function useCapitalTransactions(
     enabled: !!fundId,
   })
 }
+
+// ── Offline / manual disbursements (ADR-056) ────────────────────────
+//
+// The Fund Originator pays a member outside Paystack and reports it. The loan
+// only becomes DISBURSED once the member confirms receipt. A live report blocks
+// every other disbursement path so a loan can never be double-disbursed.
+
+export type ManualDisbursementStatus =
+  | 'Draft'
+  | 'PendingMemberConfirmation'
+  | 'Confirmed'
+  | 'Disputed'
+  | 'Cancelled'
+
+export type ManualDisbursementMethod = 'BankTransfer' | 'Cash' | 'Other'
+
+export interface ManualDisbursement {
+  id: string
+  loanId: string
+  fundId: string
+  fundName: string
+  memberId: string
+  memberDisplayName: string
+  memberEmail: string
+  reportedByGuarantorId: string
+  amount: number
+  currency: string
+  method: ManualDisbursementMethod
+  destinationBankName: string | null
+  destinationAccountLast4: string | null
+  reference: string | null
+  note: string | null
+  status: ManualDisbursementStatus
+  memberNote: string | null
+  cancelReason: string | null
+  reportedAtUtc: string
+  submittedAtUtc: string | null
+  confirmedAtUtc: string | null
+  disputedAtUtc: string | null
+  cancelledAtUtc: string | null
+  hasEvidence: boolean
+}
+
+export interface CreateOfflineDisbursementInput {
+  loanId: string
+  amount: number
+  method: ManualDisbursementMethod
+  destinationBankName?: string | null
+  destinationAccountLast4?: string | null
+  reference?: string | null
+  note?: string | null
+}
+
+export const MANUAL_DISBURSEMENT_METHOD_LABELS: Record<ManualDisbursementMethod, string> = {
+  BankTransfer: 'Bank transfer',
+  Cash: 'Cash',
+  Other: 'Other',
+}
+
+function invalidateOfflineDisbursements(qc: ReturnType<typeof useQueryClient>) {
+  qc.invalidateQueries({ queryKey: ['offline-disbursements'] })
+  qc.invalidateQueries({ queryKey: ['guarantor', 'loans'] })
+  qc.invalidateQueries({ queryKey: ['loans'] })
+  qc.invalidateQueries({ queryKey: ['payments'] })
+  qc.invalidateQueries({ queryKey: ['guarantor', 'payments'] })
+  qc.invalidateQueries({ queryKey: ['evidence'] })
+}
+
+/** The latest offline report for a loan, if any (Fund Originator view). */
+export function useGuarantorOfflineDisbursement(loanId: string | null) {
+  return useQuery({
+    queryKey: ['guarantor', 'payments', 'offline-disbursement', loanId],
+    queryFn: () =>
+      api.get<ManualDisbursement>(`/guarantor/payments/disbursements/offline/loan/${loanId}`),
+    enabled: !!loanId,
+    retry: false,
+  })
+}
+
+export function useCreateOfflineDisbursement() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: CreateOfflineDisbursementInput) =>
+      api.post<ManualDisbursement>('/guarantor/payments/disbursements/offline', input),
+    onSuccess: () => invalidateOfflineDisbursements(qc),
+  })
+}
+
+export function useSubmitOfflineDisbursement() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (reportId: string) =>
+      api.post<ManualDisbursement>(
+        `/guarantor/payments/disbursements/offline/${reportId}/submit`,
+      ),
+    onSuccess: () => invalidateOfflineDisbursements(qc),
+  })
+}
+
+export function useCancelOfflineDisbursement() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ reportId, reason }: { reportId: string; reason?: string | null }) =>
+      api.post<ManualDisbursement>(
+        `/guarantor/payments/disbursements/offline/${reportId}/cancel`,
+        { reason },
+      ),
+    onSuccess: () => invalidateOfflineDisbursements(qc),
+  })
+}
+
+/** Offline reports for the member's own loans, awaiting confirmation or resolved. */
+export function useMyOfflineDisbursements() {
+  return useQuery({
+    queryKey: ['offline-disbursements', 'mine'],
+    queryFn: () => api.get<ManualDisbursement[]>('/loans/disbursements/offline/mine'),
+  })
+}
+
+export function useConfirmOfflineDisbursement() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ reportId, note }: { reportId: string; note?: string | null }) =>
+      api.post<ManualDisbursement>(`/loans/disbursements/offline/${reportId}/confirm`, { note }),
+    onSuccess: () => invalidateOfflineDisbursements(qc),
+  })
+}
+
+export function useDisputeOfflineDisbursement() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ reportId, reason }: { reportId: string; reason: string }) =>
+      api.post<ManualDisbursement>(`/loans/disbursements/offline/${reportId}/dispute`, { reason }),
+    onSuccess: () => invalidateOfflineDisbursements(qc),
+  })
+}
+

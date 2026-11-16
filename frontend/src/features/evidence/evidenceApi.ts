@@ -52,6 +52,34 @@ export function useUploadRepaymentEvidence() {
   })
 }
 
+// ── Guarantor uploads (offline disbursement proof) ──────────────────
+
+export function useUploadDisbursementEvidence() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ reportId, file }: { reportId: string; file: File }) => {
+      const form = new FormData()
+      form.append('file', file)
+      return api.postForm<PaymentEvidence>(`/guarantor/evidence/disbursement/${reportId}`, form)
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['offline-disbursements'] })
+      qc.invalidateQueries({ queryKey: ['guarantor', 'payments'] })
+      qc.invalidateQueries({ queryKey: ['guarantor', 'evidence'] })
+      qc.invalidateQueries({ queryKey: ['evidence'] })
+    },
+  })
+}
+
+/** Proof of payment attached to one of the member's own offline disbursements. */
+export function useMemberDisbursementEvidence(reportId: string | null) {
+  return useQuery({
+    queryKey: ['evidence', 'disbursement', reportId],
+    queryFn: () => api.get<PaymentEvidence[]>(`/evidence/disbursement/${reportId}`),
+    enabled: !!reportId,
+  })
+}
+
 // ── Guarantor evidence lookup ───────────────────────────────────────
 
 export function useGuarantorContributionEvidence(contributionId: string | null) {

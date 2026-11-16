@@ -2,8 +2,10 @@ import { useState } from 'react'
 import { Paperclip, UploadCloud } from 'lucide-react'
 import { Button } from '../../components/ui/Button'
 import {
+  guarantorEvidenceUrl,
   memberEvidenceUrl,
   useUploadContributionEvidence,
+  useUploadDisbursementEvidence,
   useUploadRepaymentEvidence,
 } from './evidenceApi'
 import type { PaymentEvidence } from './evidenceApi'
@@ -11,7 +13,7 @@ import type { PaymentEvidence } from './evidenceApi'
 const MAX_MB = 5
 
 interface EvidenceUploadProps {
-  resourceType: 'contribution' | 'repayment'
+  resourceType: 'contribution' | 'repayment' | 'disbursement'
   resourceId: string
   hasEvidence?: boolean
 }
@@ -23,14 +25,24 @@ export function EvidenceUpload({
 }: EvidenceUploadProps) {
   const uploadContribution = useUploadContributionEvidence()
   const uploadRepayment = useUploadRepaymentEvidence()
+  const uploadDisbursement = useUploadDisbursementEvidence()
+
   const isPending =
     resourceType === 'contribution'
       ? uploadContribution.isPending
-      : uploadRepayment.isPending
+      : resourceType === 'repayment'
+        ? uploadRepayment.isPending
+        : uploadDisbursement.isPending
   const error =
     resourceType === 'contribution'
       ? uploadContribution.error
-      : uploadRepayment.error
+      : resourceType === 'repayment'
+        ? uploadRepayment.error
+        : uploadDisbursement.error
+
+  // Offline-disbursement proof is uploaded by the Guarantor and viewed through
+  // the guarantor evidence endpoint; member evidence uses the member endpoint.
+  const isGuarantorUpload = resourceType === 'disbursement'
 
   const [file, setFile] = useState<File | null>(null)
   const [uploaded, setUploaded] = useState<PaymentEvidence | null>(null)
@@ -38,24 +50,25 @@ export function EvidenceUpload({
   function submit(e: React.FormEvent) {
     e.preventDefault()
     if (!file) return
-    const args = { file }
+    const onSuccess = (evidence: PaymentEvidence) => {
+      setUploaded(evidence)
+      setFile(null)
+    }
     if (resourceType === 'contribution') {
-      uploadContribution.mutate(
-        { contributionId: resourceId, ...args },
-        { onSuccess: (evidence) => { setUploaded(evidence); setFile(null) } },
-      )
+      uploadContribution.mutate({ contributionId: resourceId, file }, { onSuccess })
+    } else if (resourceType === 'repayment') {
+      uploadRepayment.mutate({ pendingRepaymentId: resourceId, file }, { onSuccess })
     } else {
-      uploadRepayment.mutate(
-        { pendingRepaymentId: resourceId, ...args },
-        { onSuccess: (evidence) => { setUploaded(evidence); setFile(null) } },
-      )
+      uploadDisbursement.mutate({ reportId: resourceId, file }, { onSuccess })
     }
   }
 
   return (
     <form onSubmit={submit}>
       <div className="field">
-        <label htmlFor={`evidence-${resourceType}-${resourceId}`}>Payment evidence</label>
+        <label htmlFor={`evidence-${resourceType}-${resourceId}`}>
+          {isGuarantorUpload ? 'Proof of payment' : 'Payment evidence'}
+        </label>
         <input
           id={`evidence-${resourceType}-${resourceId}`}
           type="file"
@@ -64,8 +77,9 @@ export function EvidenceUpload({
           required
         />
         <p className="field-hint">
-          Upload a bank transfer receipt or payment proof (image or PDF, up to {MAX_MB} MB).
-          Evidence does not confirm payment — the Guarantor still verifies it.
+          {isGuarantorUpload
+            ? `Upload the transfer receipt or proof that you paid the member (image or PDF, up to ${MAX_MB} MB). The member sees this before confirming receipt.`
+            : `Upload a bank transfer receipt or payment proof (image or PDF, up to ${MAX_MB} MB). Evidence does not confirm payment — the Guarantor still verifies it.`}
         </p>
       </div>
 
@@ -79,7 +93,14 @@ export function EvidenceUpload({
           <Button
             type="button"
             variant="ghost"
-            onClick={() => window.open(memberEvidenceUrl(uploaded.id), '_blank')}
+            onClick={() =>
+              window.open(
+                isGuarantorUpload
+                  ? guarantorEvidenceUrl(uploaded.id)
+                  : memberEvidenceUrl(uploaded.id),
+                '_blank',
+              )
+            }
           >
             View uploaded evidence
           </Button>
@@ -87,7 +108,13 @@ export function EvidenceUpload({
       ) : (
         <Button type="submit" disabled={!file || isPending}>
           <UploadCloud size={16} />
-          {isPending ? 'Uploading…' : hasEvidence ? 'Upload another file' : 'Upload evidence'}
+          {isPending
+            ? 'Uploading…'
+            : hasEvidence
+              ? 'Upload another file'
+              : isGuarantorUpload
+                ? 'Upload proof'
+                : 'Upload evidence'}
         </Button>
       )}
     </form>

@@ -69,6 +69,8 @@ builder.Services.AddScoped<FamilyTrustFund.Application.Repayments.IRepaymentRepo
 builder.Services.AddScoped<FamilyTrustFund.Application.Repayments.RepaymentService>();
 builder.Services.AddScoped<FamilyTrustFund.Application.Repayments.IPendingRepaymentRepository, FamilyTrustFund.Infrastructure.Repayments.PendingRepaymentRepository>();
 builder.Services.AddScoped<FamilyTrustFund.Application.Repayments.PendingRepaymentService>();
+builder.Services.AddScoped<FamilyTrustFund.Application.Payments.IManualDisbursementRepository, FamilyTrustFund.Infrastructure.Payments.ManualDisbursementRepository>();
+builder.Services.AddScoped<FamilyTrustFund.Application.Payments.ManualDisbursementService>();
 
 // ---- Evidence + storage (Phase 14): payment evidence attachments ----
 builder.Services.Configure<FileSystemStorageOptions>(builder.Configuration.GetSection(FileSystemStorageOptions.SectionName));
@@ -311,6 +313,7 @@ app.MapPaymentEndpoints();
 app.MapCapitalFundingEndpoints();
 app.MapRepaymentEndpoints();
 app.MapPendingRepaymentEndpoints();
+app.MapManualDisbursementEndpoints();
 app.MapAdminEndpoints();
 if (app.Environment.IsDevelopment())
 {

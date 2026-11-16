@@ -42,6 +42,7 @@ public class GroupDisbursementTests
                 Payments,
                 registry,
                 CapitalFunding,
+                new FakeManualDisbursementRepository(),
                 Loans,
                 Funds,
                 Guarantors,

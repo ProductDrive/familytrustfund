@@ -38,6 +38,7 @@ public class ApplicationDbContext : IdentityDbContext<
     public DbSet<PaymentRecipient> PaymentRecipients => Set<PaymentRecipient>();
     public DbSet<DisbursementTransaction> DisbursementTransactions => Set<DisbursementTransaction>();
     public DbSet<CapitalTransaction> CapitalTransactions => Set<CapitalTransaction>();
+    public DbSet<ManualDisbursement> ManualDisbursements => Set<ManualDisbursement>();
     public DbSet<LoanSchedule> LoanSchedules => Set<LoanSchedule>();
     public DbSet<LoanScheduleItem> LoanScheduleItems => Set<LoanScheduleItem>();
     public DbSet<Repayment> Repayments => Set<Repayment>();

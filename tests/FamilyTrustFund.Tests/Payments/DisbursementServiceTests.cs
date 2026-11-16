@@ -22,6 +22,7 @@ public class DisbursementServiceTests
         public FakePaymentProvider Provider { get; } = new();
         public FakeAuditLog Audit { get; } = new();
         public FakeRepaymentRepository Repayments { get; } = new();
+        public FakeManualDisbursementRepository ManualDisbursements { get; } = new();
         public DisbursementService Service { get; }
 
         public Harness()
@@ -32,6 +33,7 @@ public class DisbursementServiceTests
                 Payments,
                 registry,
                 CapitalFunding,
+                ManualDisbursements,
                 Loans,
                 Funds,
                 new FakeFundGuarantorRepository(Funds),
@@ -199,6 +201,26 @@ public class DisbursementServiceTests
 
         await act.Should().ThrowAsync<InvalidPaymentException>()
             .WithMessage("*verified bank recipient*");
+    }
+
+    [Fact]
+    public async Task InitiateDisbursement_is_blocked_by_live_offline_report()
+    {
+        var h = NewHarness();
+        var fund = h.AddFamilyFund();
+        var loan = h.AddApprovedLoan(fund);
+        await h.AddVerifiedRecipientAsync();
+
+        // A live offline report for the same loan must block the Paystack path
+        // so a loan can never be double-disbursed (ADR-056).
+        h.ManualDisbursements.Add(ManualDisbursement.CreateDraft(
+            loan.Id, fund.Id, MemberId, GuarantorId, 100_000m, 100_000m, ManualDisbursementMethod.Cash));
+
+        var act = () => h.Service.InitiateDisbursementAsync(GuarantorId, new InitiateDisbursementRequest { LoanId = loan.Id }, "guarantor@example.com", null, CancellationToken.None);
+
+        await act.Should().ThrowAsync<InvalidPaymentException>()
+            .WithMessage("*offline disbursement*");
+        h.Payments.Transactions.Should().BeEmpty();
     }
 
     [Fact]

@@ -256,6 +256,29 @@ public class LoanTests
     }
 
     [Fact]
+    public void RevertDisbursementPendingToApproved_from_disbursement_pending()
+    {
+        var loan = Loan.Request(FundId, MemberId, 100m, RepaymentFrequency.Weekly, 0m, LoanFundingSource.GuarantorCapital);
+        loan.Approve(GuarantorId, 100m, RepaymentFrequency.Weekly, 100m);
+        loan.MarkDisbursementPending();
+
+        loan.RevertDisbursementPendingToApproved();
+
+        loan.Status.Should().Be(LoanStatus.Approved);
+    }
+
+    [Fact]
+    public void RevertDisbursementPendingToApproved_from_approved_throws()
+    {
+        var loan = Loan.Request(FundId, MemberId, 100m, RepaymentFrequency.Weekly, 0m, LoanFundingSource.GuarantorCapital);
+        loan.Approve(GuarantorId, 100m, RepaymentFrequency.Weekly, 100m);
+
+        var act = () => loan.RevertDisbursementPendingToApproved();
+
+        act.Should().Throw<InvalidLoanException>();
+    }
+
+    [Fact]
     public void MarkCompleted_from_disbursed()
     {
         var loan = Loan.Request(FundId, MemberId, 100m, RepaymentFrequency.Weekly, 0m, LoanFundingSource.GuarantorCapital);

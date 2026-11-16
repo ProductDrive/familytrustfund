@@ -16,6 +16,13 @@ namespace FamilyTrustFund.Domain.Payments;
 /// </remarks>
 public class CapitalTransaction
 {
+    /// <summary>
+    /// Well-known provider value for capital recorded from an offline/manual
+    /// disbursement confirmed by the member, rather than a payment provider
+    /// collection (ADR-056).
+    /// </summary>
+    public const string ManualProvider = "Manual";
+
     public Guid Id { get; private set; }
 
     /// <summary>The fund whose loan this capital payment funds.</summary>
@@ -121,6 +128,65 @@ public class CapitalTransaction
             Status = CapitalTransactionStatus.PendingConfirmation,
             InitiatedAtUtc = DateTime.UtcNow,
             UpdatedAtUtc = DateTime.UtcNow,
+        };
+    }
+
+    /// <summary>
+    /// Records an already-completed offline/manual capital payment for a loan
+    /// (ADR-056). The Guarantor paid the member directly outside the payment
+    /// provider, so there is no provider collection and no provider fee: the
+    /// gross equals the net equals the approved amount. The record is created
+    /// already <see cref="CapitalTransactionStatus.Confirmed"/> because it is
+    /// only created once the member has confirmed receipt.
+    /// </summary>
+    public static CapitalTransaction CreateManualConfirmed(
+        Guid fundId,
+        Guid loanId,
+        Guid guarantorId,
+        decimal amount,
+        string providerReference)
+    {
+        if (fundId == Guid.Empty)
+        {
+            throw new InvalidPaymentException("A fund is required for a capital payment.");
+        }
+
+        if (loanId == Guid.Empty)
+        {
+            throw new InvalidPaymentException("A loan is required for a capital payment.");
+        }
+
+        if (guarantorId == Guid.Empty)
+        {
+            throw new InvalidPaymentException("A guarantor is required for a capital payment.");
+        }
+
+        if (amount <= 0)
+        {
+            throw new InvalidPaymentException("Capital payment amount must be greater than zero.");
+        }
+
+        if (string.IsNullOrWhiteSpace(providerReference))
+        {
+            throw new InvalidPaymentException("Provider reference is required.");
+        }
+
+        var now = DateTime.UtcNow;
+        return new CapitalTransaction
+        {
+            Id = Guid.NewGuid(),
+            FundId = fundId,
+            LoanId = loanId,
+            GuarantorId = guarantorId,
+            Provider = ManualProvider,
+            AmountGross = amount,
+            ProviderFee = 0m,
+            AmountNet = amount,
+            ProviderReference = providerReference.Trim(),
+            Status = CapitalTransactionStatus.Confirmed,
+            InitiatedAtUtc = now,
+            CompletedAtUtc = now,
+            UpdatedAtUtc = now,
         };
     }
 

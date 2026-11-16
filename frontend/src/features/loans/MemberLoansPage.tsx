@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { HandCoins, CircleDollarSign, X, AlertTriangle } from 'lucide-react'
+import { HandCoins, CircleDollarSign, X, AlertTriangle, Check, Paperclip } from 'lucide-react'
 import { useMyMemberships } from '../membership/membershipApi'
 import {
   useMyLoans,
@@ -10,7 +10,18 @@ import {
   suggestedInstalments,
 } from './loanApi'
 import type { Loan, LoanPreview, RepaymentFrequency } from './loanApi'
-import { useMyLoanDisbursement } from '../payments/paymentApi'
+import {
+  MANUAL_DISBURSEMENT_METHOD_LABELS,
+  useConfirmOfflineDisbursement,
+  useDisputeOfflineDisbursement,
+  useMyLoanDisbursement,
+  useMyOfflineDisbursements,
+  type ManualDisbursement,
+} from '../payments/paymentApi'
+import {
+  memberEvidenceUrl,
+  useMemberDisbursementEvidence,
+} from '../evidence/evidenceApi'
 import { MemberBankDetails } from '../payments/MemberBankDetails'
 import { PageHeader } from '../../components/ui/PageHeader'
 import { Card } from '../../components/ui/Card'
@@ -30,8 +41,23 @@ const FREQUENCY_LABELS: Record<RepaymentFrequency, string> = {
   Monthly: 'monthly',
 }
 
-function DisbursementCell({ loanId }: { loanId: string }) {
+function DisbursementCell({
+  loanId,
+  offline,
+}: {
+  loanId: string
+  offline?: ManualDisbursement
+}) {
   const { data: disbursement, isLoading } = useMyLoanDisbursement(loanId)
+  // An offline report supersedes the provider view for this loan (ADR-056).
+  if (offline) {
+    return (
+      <StatusBadge
+        status={offline.status === 'Confirmed' ? 'Disbursed' : offline.status}
+        withDot
+      />
+    )
+  }
   if (isLoading) return <span className="cell-secondary">…</span>
   if (!disbursement) return <span className="cell-secondary">—</span>
   return <StatusBadge status={disbursement.status} withDot />
@@ -338,10 +364,185 @@ function LoanRequestForm({ onDone }: { onDone: () => void }) {
   )
 }
 
+function OfflineDisbursementEvidence({ reportId }: { reportId: string }) {
+  const { data: evidence, isLoading } = useMemberDisbursementEvidence(reportId)
+  if (isLoading) return <span className="cell-secondary">…</span>
+  if (!evidence || evidence.length === 0) return null
+  return (
+    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+      {evidence.map((e) => (
+        <a
+          key={e.id}
+          className="btn btn--secondary btn--sm"
+          href={memberEvidenceUrl(e.id)}
+          target="_blank"
+          rel="noreferrer"
+        >
+          <Paperclip size={14} /> {e.originalFileName}
+        </a>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * The member's view of an offline payment the Fund Originator reported. They
+ * confirm receipt (which disburses the loan) or dispute it. Confirmation is the
+ * only event that posts to the ledger (ADR-056).
+ */
+function OfflineDisbursementPrompt({ report }: { report: ManualDisbursement }) {
+  const confirm = useConfirmOfflineDisbursement()
+  const dispute = useDisputeOfflineDisbursement()
+  const [showDispute, setShowDispute] = useState(false)
+  const [reason, setReason] = useState('')
+
+  const pending = report.status === 'PendingMemberConfirmation'
+  const disputed = report.status === 'Disputed'
+
+  return (
+    <Card>
+      <div className="card-title">
+        <h2>{pending ? 'Payment awaiting your confirmation' : 'Payment you disputed'}</h2>
+        <StatusBadge status={report.status} withDot />
+      </div>
+
+      <p className="muted">
+        {pending
+          ? 'The Fund Originator reports paying you outside the platform. Confirm only if the money has reached you — confirming marks your loan as disbursed.'
+          : 'You told us you did not receive this payment. The Fund Originator must resolve it before your loan is disbursed.'}
+      </p>
+
+      <dl
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
+          gap: 12,
+          margin: '16px 0',
+        }}
+      >
+        <div>
+          <dt className="muted" style={{ fontSize: 12 }}>
+            Amount
+          </dt>
+          <dd style={{ margin: 0, fontWeight: 600 }}>
+            <MoneyDisplay amount={report.amount} />
+          </dd>
+        </div>
+        <div>
+          <dt className="muted" style={{ fontSize: 12 }}>
+            Method
+          </dt>
+          <dd style={{ margin: 0 }}>{MANUAL_DISBURSEMENT_METHOD_LABELS[report.method]}</dd>
+        </div>
+        {report.destinationBankName && (
+          <div>
+            <dt className="muted" style={{ fontSize: 12 }}>
+              Paid to
+            </dt>
+            <dd style={{ margin: 0 }}>
+              {report.destinationBankName}
+              {report.destinationAccountLast4
+                ? ` ••••${report.destinationAccountLast4}`
+                : ''}
+            </dd>
+          </div>
+        )}
+        {report.reference && (
+          <div>
+            <dt className="muted" style={{ fontSize: 12 }}>
+              Reference
+            </dt>
+            <dd style={{ margin: 0 }}>{report.reference}</dd>
+          </div>
+        )}
+        <div>
+          <dt className="muted" style={{ fontSize: 12 }}>
+            Reported
+          </dt>
+          <dd style={{ margin: 0 }}>{formatShortDate(report.reportedAtUtc)}</dd>
+        </div>
+      </dl>
+
+      {report.note && (
+        <p className="muted">From the Fund Originator: “{report.note}”</p>
+      )}
+
+      <div style={{ marginBottom: 16 }}>
+        <OfflineDisbursementEvidence reportId={report.id} />
+      </div>
+
+      {disputed && report.memberNote && (
+        <p className="muted">Your reason: “{report.memberNote}”</p>
+      )}
+
+      {pending && !showDispute && (
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <Button
+            disabled={confirm.isPending}
+            onClick={() => confirm.mutate({ reportId: report.id })}
+          >
+            <Check size={16} /> {confirm.isPending ? 'Confirming…' : 'I received this payment'}
+          </Button>
+          <Button variant="ghost" onClick={() => setShowDispute(true)}>
+            <AlertTriangle size={16} /> I did not receive this
+          </Button>
+        </div>
+      )}
+
+      {pending && showDispute && (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            if (reason.trim()) {
+              dispute.mutate({ reportId: report.id, reason: reason.trim() })
+            }
+          }}
+        >
+          <div className="field">
+            <label htmlFor={`dispute-${report.id}`}>
+              Why are you disputing this payment?
+            </label>
+            <textarea
+              id={`dispute-${report.id}`}
+              rows={2}
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              required
+            />
+          </div>
+          {dispute.isError && (
+            <p className="form-error">{(dispute.error as Error).message}</p>
+          )}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Button
+              type="submit"
+              variant="danger"
+              disabled={!reason.trim() || dispute.isPending}
+            >
+              {dispute.isPending ? 'Submitting…' : 'Submit dispute'}
+            </Button>
+            <Button type="button" variant="secondary" onClick={() => setShowDispute(false)}>
+              Cancel
+            </Button>
+          </div>
+        </form>
+      )}
+
+      {confirm.isError && <p className="form-error">{(confirm.error as Error).message}</p>}
+    </Card>
+  )
+}
+
 export function MemberLoansPage() {
   const navigate = useNavigate()
   const { data: loans, isLoading, error } = useMyLoans()
+  const { data: offlineReports } = useMyOfflineDisbursements()
   const [showForm, setShowForm] = useState(false)
+
+  const pendingOffline =
+    offlineReports?.filter(
+      (r) => r.status === 'PendingMemberConfirmation' || r.status === 'Disputed',
+    ) ?? []
 
   return (
     <div>
@@ -359,6 +560,14 @@ export function MemberLoansPage() {
 
       {isLoading && <SkeletonCard />}
       {error && <p className="error-text">{(error as Error).message}</p>}
+
+      {pendingOffline.length > 0 && (
+        <div style={{ marginBottom: 20, display: 'grid', gap: 16 }}>
+          {pendingOffline.map((report) => (
+            <OfflineDisbursementPrompt key={report.id} report={report} />
+          ))}
+        </div>
+      )}
 
       <div style={{ marginBottom: 20 }}>
         <MemberBankDetails />
@@ -419,7 +628,10 @@ export function MemberLoansPage() {
                     <StatusBadge status={l.status} withDot />
                   </td>
                   <td>
-                    <DisbursementCell loanId={l.id} />
+                    <DisbursementCell
+                      loanId={l.id}
+                      offline={offlineReports?.find((r) => r.loanId === l.id)}
+                    />
                   </td>
                   <td className="cell-secondary">
                     {formatShortDate(l.requestedAtUtc)}

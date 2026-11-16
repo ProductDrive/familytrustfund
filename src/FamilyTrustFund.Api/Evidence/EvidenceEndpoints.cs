@@ -1,9 +1,11 @@
 using FamilyTrustFund.Application.Contributions;
 using FamilyTrustFund.Application.Evidence;
 using FamilyTrustFund.Application.Funds;
+using FamilyTrustFund.Application.Payments;
 using FamilyTrustFund.Application.Repayments;
 using FamilyTrustFund.Domain.Contributions;
 using FamilyTrustFund.Domain.Evidence;
+using FamilyTrustFund.Domain.Payments;
 using FamilyTrustFund.Domain.Repayments;
 using FamilyTrustFund.Infrastructure.Identity;
 using Microsoft.AspNetCore.Identity;
@@ -136,6 +138,33 @@ public static class EvidenceEndpoints
             }
         });
 
+        // Evidence for one of the member's own offline disbursements. The member
+        // needs to see the Guarantor's proof of payment before confirming receipt.
+        memberGroup.MapGet("/disbursement/{reportId:guid}", async (
+            Guid reportId,
+            HttpContext http,
+            UserManager<ApplicationUser> userManager,
+            ManualDisbursementService manualDisbursementService,
+            EvidenceService evidenceService,
+            CancellationToken ct) =>
+        {
+            var userId = UserId(http, userManager);
+            if (userId is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            var report = await manualDisbursementService.GetForOwnerAsync(reportId, userId.Value, ct);
+            if (report is null)
+            {
+                return Results.NotFound(new { message = "Offline disbursement not found or you are not its owner." });
+            }
+
+            var evidence = await evidenceService.GetForResourceAsync(
+                ManualDisbursementService.EvidenceResourceType, reportId, ct);
+            return Results.Ok(evidence);
+        });
+
         // My evidence across my resources (Member).
         memberGroup.MapGet("/mine", async (
             HttpContext http,
@@ -163,6 +192,7 @@ public static class EvidenceEndpoints
             EvidenceService evidenceService,
             ContributionService contributionService,
             PendingRepaymentService pendingRepaymentService,
+            ManualDisbursementService manualDisbursementService,
             CancellationToken ct) =>
         {
             var userId = UserId(http, userManager);
@@ -172,7 +202,7 @@ public static class EvidenceEndpoints
             }
 
             return await DownloadOrAuthorizeAsync(
-                evidenceId, userId.Value, isMember: true, http, contributionService, pendingRepaymentService, evidenceService, ct);
+                evidenceId, userId.Value, isMember: true, http, contributionService, pendingRepaymentService, manualDisbursementService, evidenceService, ct);
         });
 
         // ── Guarantor endpoints ───────────────────────────────────────────
@@ -231,6 +261,90 @@ public static class EvidenceEndpoints
             return Results.Ok(evidence);
         });
 
+        // Upload proof of an offline disbursement (Fund Originator). The report
+        // must still be a draft: once submitted it is visible to the member.
+        guarantorGroup.MapPost("/disbursement/{reportId:guid}", async (
+            Guid reportId,
+            HttpContext http,
+            UserManager<ApplicationUser> userManager,
+            ManualDisbursementService manualDisbursementService,
+            EvidenceService evidenceService,
+            IFormFile? file,
+            CancellationToken ct) =>
+        {
+            var userId = UserId(http, userManager);
+            if (userId is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            if (file is null || file.Length == 0)
+            {
+                return Results.BadRequest(new { message = "A file is required." });
+            }
+
+            if (file.Length > MaxUploadBytes)
+            {
+                return Results.BadRequest(new { message = "Evidence file is too large. Maximum size is 5 MB." });
+            }
+
+            var report = await manualDisbursementService.GetForGuarantorAsync(reportId, userId.Value, ct);
+            if (report is null)
+            {
+                return Results.NotFound(new { message = "Offline disbursement not found or not in your fund." });
+            }
+
+            if (report.Status != ManualDisbursementStatus.Draft)
+            {
+                return Results.BadRequest(new { message = "Proof of payment can only be added while the offline disbursement is a draft." });
+            }
+
+            try
+            {
+                using var memory = new MemoryStream();
+                await file.CopyToAsync(memory, ct);
+                var evidence = await evidenceService.UploadAsync(
+                    userId.Value,
+                    ManualDisbursementService.EvidenceResourceType,
+                    reportId,
+                    file.FileName,
+                    file.ContentType,
+                    memory.ToArray(),
+                    ct);
+                return Results.Created($"/api/guarantor/evidence/{evidence.Id}", evidence);
+            }
+            catch (InvalidEvidenceException ex)
+            {
+                return Results.BadRequest(new { message = ex.Message });
+            }
+        });
+
+        // Evidence for an offline disbursement in the Guarantor's fund.
+        guarantorGroup.MapGet("/disbursement/{reportId:guid}", async (
+            Guid reportId,
+            HttpContext http,
+            UserManager<ApplicationUser> userManager,
+            ManualDisbursementService manualDisbursementService,
+            EvidenceService evidenceService,
+            CancellationToken ct) =>
+        {
+            var userId = UserId(http, userManager);
+            if (userId is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            var report = await manualDisbursementService.GetForGuarantorAsync(reportId, userId.Value, ct);
+            if (report is null)
+            {
+                return Results.NotFound(new { message = "Offline disbursement not found or not in your fund." });
+            }
+
+            var evidence = await evidenceService.GetForResourceAsync(
+                ManualDisbursementService.EvidenceResourceType, reportId, ct);
+            return Results.Ok(evidence);
+        });
+
         // Download evidence by id (Guarantor — must own the resource's fund).
         guarantorGroup.MapGet("/{evidenceId:guid}", async (
             Guid evidenceId,
@@ -239,6 +353,7 @@ public static class EvidenceEndpoints
             EvidenceService evidenceService,
             ContributionService contributionService,
             PendingRepaymentService pendingRepaymentService,
+            ManualDisbursementService manualDisbursementService,
             CancellationToken ct) =>
         {
             var userId = UserId(http, userManager);
@@ -248,7 +363,7 @@ public static class EvidenceEndpoints
             }
 
             return await DownloadOrAuthorizeAsync(
-                evidenceId, userId.Value, isMember: false, http, contributionService, pendingRepaymentService, evidenceService, ct);
+                evidenceId, userId.Value, isMember: false, http, contributionService, pendingRepaymentService, manualDisbursementService, evidenceService, ct);
         });
 
         return app;
@@ -261,6 +376,7 @@ public static class EvidenceEndpoints
         HttpContext http,
         ContributionService contributionService,
         PendingRepaymentService pendingRepaymentService,
+        ManualDisbursementService manualDisbursementService,
         EvidenceService evidenceService,
         CancellationToken ct)
     {
@@ -274,7 +390,7 @@ public static class EvidenceEndpoints
 
         // Authorization: resolve the owning resource and enforce rules.
         var allowed = await IsAllowedToViewAsync(
-            evidence, userId, isMember, contributionService, pendingRepaymentService, ct);
+            evidence, userId, isMember, contributionService, pendingRepaymentService, manualDisbursementService, ct);
         if (!allowed)
         {
             return Results.Forbid();
@@ -297,6 +413,7 @@ public static class EvidenceEndpoints
         bool isMember,
         ContributionService contributionService,
         PendingRepaymentService pendingRepaymentService,
+        ManualDisbursementService manualDisbursementService,
         CancellationToken ct)
     {
         if (string.Equals(evidence.ResourceType, "Contribution", StringComparison.OrdinalIgnoreCase))
@@ -326,6 +443,20 @@ public static class EvidenceEndpoints
             // Guarantor must own the fund the repayment belongs to.
             var pendingForGuarantor = await pendingRepaymentService.GetForGuarantorAsync(evidence.ResourceId, userId, ct);
             return pendingForGuarantor is not null;
+        }
+
+        if (string.Equals(evidence.ResourceType, "Disbursement", StringComparison.OrdinalIgnoreCase))
+        {
+            if (isMember)
+            {
+                // The member the loan belongs to may view the proof of payment.
+                var reportForOwner = await manualDisbursementService.GetForOwnerAsync(evidence.ResourceId, userId, ct);
+                return reportForOwner is not null;
+            }
+
+            // Guarantor must operate the fund the offline report belongs to.
+            var reportForGuarantor = await manualDisbursementService.GetForGuarantorAsync(evidence.ResourceId, userId, ct);
+            return reportForGuarantor is not null;
         }
 
         return false;

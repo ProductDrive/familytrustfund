@@ -36,6 +36,7 @@ public class DisbursementService
     private readonly IPaymentRepository _paymentRepository;
     private readonly IPaymentProviderRegistry _providerRegistry;
     private readonly ICapitalFundingRepository _capitalFundingRepository;
+    private readonly IManualDisbursementRepository _manualDisbursementRepository;
     private readonly ILoanRepository _loanRepository;
     private readonly IFundRepository _fundRepository;
     private readonly IFundGuarantorRepository _guarantorRepository;
@@ -46,6 +47,7 @@ public class DisbursementService
         IPaymentRepository paymentRepository,
         IPaymentProviderRegistry providerRegistry,
         ICapitalFundingRepository capitalFundingRepository,
+        IManualDisbursementRepository manualDisbursementRepository,
         ILoanRepository loanRepository,
         IFundRepository fundRepository,
         IFundGuarantorRepository guarantorRepository,
@@ -55,6 +57,7 @@ public class DisbursementService
         _paymentRepository = paymentRepository;
         _providerRegistry = providerRegistry;
         _capitalFundingRepository = capitalFundingRepository;
+        _manualDisbursementRepository = manualDisbursementRepository;
         _loanRepository = loanRepository;
         _fundRepository = fundRepository;
         _guarantorRepository = guarantorRepository;
@@ -199,6 +202,14 @@ public class DisbursementService
         if (existing is not null && existing.Status != DisbursementStatus.Failed)
         {
             throw new InvalidPaymentException("A disbursement for this loan has already been initiated.");
+        }
+
+        // Never double-disburse: a live offline/manual report blocks the Paystack
+        // path until it is resolved or cancelled (ADR-056).
+        if (await _manualDisbursementRepository.GetLiveForLoanAsync(loan.Id, ct) is not null)
+        {
+            throw new InvalidPaymentException(
+                "An offline disbursement for this loan is already in progress. Resolve or cancel it first.");
         }
 
         if (loan.Status != LoanStatus.Approved && loan.Status != LoanStatus.DisbursementPending)

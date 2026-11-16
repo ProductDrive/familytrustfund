@@ -6,16 +6,25 @@ import { useFunds } from '../funds/fundApi'
 import { useFundLoans, useGuarantorCancelLoan } from '../loans/loanApi'
 import { useCurrentUser } from '../auth/authApi'
 import {
+  MANUAL_DISBURSEMENT_METHOD_LABELS,
   useCancelDisbursement,
+  useCancelOfflineDisbursement,
+  useCreateOfflineDisbursement,
   useDisburseLoan,
   useGuarantorLoanDisbursement,
+  useGuarantorOfflineDisbursement,
+  useSubmitOfflineDisbursement,
   useVerifyCapitalPayment,
   type Disbursement,
+  type ManualDisbursement,
+  type ManualDisbursementMethod,
 } from './paymentApi'
+import { EvidenceUpload } from '../evidence/EvidenceUpload'
 import { PageHeader } from '../../components/ui/PageHeader'
 import { Card } from '../../components/ui/Card'
 import { StatusBadge } from '../../components/ui/Badge'
 import { Button } from '../../components/ui/Button'
+import { Modal } from '../../components/ui/Modal'
 import { EmptyState, SkeletonCard } from '../../components/ui/State'
 import { MoneyDisplay } from '../../lib/money'
 import { formatNaira } from '../../lib/formatNaira'
@@ -76,11 +85,256 @@ function PendingActions({
   )
 }
 
+const OFFLINE_METHODS: ManualDisbursementMethod[] = ['BankTransfer', 'Cash', 'Other']
+
+/**
+ * Modal for the Fund Originator to report an offline payment. It only creates a
+ * draft: the ledger is untouched and the member is not notified until the report
+ * is submitted (ADR-056).
+ */
+function OfflineReportForm({ loan, onClose }: { loan: Loan; onClose: () => void }) {
+  const create = useCreateOfflineDisbursement()
+  const approvedAmount = loan.approvedAmount ?? loan.requestedAmount
+  const [method, setMethod] = useState<ManualDisbursementMethod>('BankTransfer')
+  const [bankName, setBankName] = useState('')
+  const [last4, setLast4] = useState('')
+  const [reference, setReference] = useState('')
+  const [note, setNote] = useState('')
+
+  const isTransfer = method === 'BankTransfer'
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault()
+    create.mutate(
+      {
+        loanId: loan.id,
+        amount: approvedAmount,
+        method,
+        destinationBankName: isTransfer ? bankName.trim() || null : null,
+        destinationAccountLast4: isTransfer ? last4.trim() || null : null,
+        reference: reference.trim() || null,
+        note: note.trim() || null,
+      },
+      { onSuccess: onClose },
+    )
+  }
+
+  return (
+    <Modal open onClose={onClose} titleId="offline-disbursement-title" maxWidth={520}>
+      <h2 id="offline-disbursement-title">Record an offline payment</h2>
+      <p className="muted">
+        You paid {loan.memberDisplayName || 'the member'} outside the platform. The
+        member must confirm receipt before the loan is marked disbursed. Nothing is
+        recorded in the ledger until they confirm.
+      </p>
+      <form onSubmit={submit}>
+        <div className="field">
+          <label>Amount</label>
+          <p className="money" style={{ margin: 0 }}>
+            {formatNaira(approvedAmount)}
+          </p>
+          <p className="field-hint">
+            The member receives exactly the approved amount. There is no provider fee
+            on an offline payment.
+          </p>
+        </div>
+
+        <div className="field">
+          <label htmlFor="offline-method">Payment method</label>
+          <select
+            id="offline-method"
+            value={method}
+            onChange={(e) => setMethod(e.target.value as ManualDisbursementMethod)}
+          >
+            {OFFLINE_METHODS.map((m) => (
+              <option key={m} value={m}>
+                {MANUAL_DISBURSEMENT_METHOD_LABELS[m]}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {isTransfer && (
+          <div
+            className="grid"
+            style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}
+          >
+            <div className="field">
+              <label htmlFor="offline-bank">Destination bank (optional)</label>
+              <input
+                id="offline-bank"
+                value={bankName}
+                onChange={(e) => setBankName(e.target.value)}
+                placeholder="e.g. GTBank"
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="offline-last4">Account last 4 digits (optional)</label>
+              <input
+                id="offline-last4"
+                value={last4}
+                onChange={(e) => setLast4(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                inputMode="numeric"
+                maxLength={4}
+                placeholder="e.g. 6789"
+              />
+            </div>
+          </div>
+        )}
+
+        <div className="field">
+          <label htmlFor="offline-reference">Reference (optional)</label>
+          <input
+            id="offline-reference"
+            value={reference}
+            onChange={(e) => setReference(e.target.value)}
+            placeholder="e.g. transfer reference"
+          />
+        </div>
+
+        <div className="field">
+          <label htmlFor="offline-note">Note for the member (optional)</label>
+          <textarea
+            id="offline-note"
+            rows={2}
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="Anything the member should know about this payment."
+          />
+        </div>
+
+        {create.isError && <p className="form-error">{(create.error as Error).message}</p>}
+
+        <div style={cellRow}>
+          <Button type="submit" disabled={create.isPending}>
+            {create.isPending ? 'Saving…' : 'Save draft'}
+          </Button>
+          <Button type="button" variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
+/**
+ * The Fund Originator's view of the latest offline report for a loan: upload
+ * proof and submit while it is a draft, watch it while the member decides, or
+ * cancel it to retry (the only fallback when the member never responds).
+ */
+function OfflineReportPanel({
+  report,
+  loan,
+}: {
+  report: ManualDisbursement
+  loan: Loan
+}) {
+  const submit = useSubmitOfflineDisbursement()
+  const cancel = useCancelOfflineDisbursement()
+
+  if (report.status === 'Confirmed') {
+    return (
+      <div style={cellStack}>
+        <div style={cellRow}>
+          <StatusBadge status="Disbursed" withDot />
+          <span className="cell-secondary">Confirmed by the member (offline)</span>
+        </div>
+        <span className="muted" style={{ fontSize: 12 }}>
+          {MANUAL_DISBURSEMENT_METHOD_LABELS[report.method]} · {formatNaira(report.amount)}
+        </span>
+      </div>
+    )
+  }
+
+  return (
+    <div style={cellStack}>
+      <div style={cellRow}>
+        <StatusBadge status={report.status} withDot />
+        <span className="cell-secondary">
+          {report.status === 'Draft' && 'Not yet sent to the member'}
+          {report.status === 'PendingMemberConfirmation' && 'Awaiting the member’s confirmation'}
+          {report.status === 'Disputed' && 'The member says they did not receive this'}
+        </span>
+      </div>
+
+      <span className="muted" style={{ fontSize: 12 }}>
+        {MANUAL_DISBURSEMENT_METHOD_LABELS[report.method]} · {formatNaira(report.amount)}
+        {report.reference ? ` · Ref ${report.reference}` : ''}
+      </span>
+
+      {report.status === 'Draft' && (
+        <>
+          <EvidenceUpload
+            resourceType="disbursement"
+            resourceId={report.id}
+            hasEvidence={report.hasEvidence}
+          />
+          <Button
+            size="sm"
+            disabled={!report.hasEvidence || submit.isPending}
+            onClick={() => submit.mutate(report.id)}
+          >
+            <Send size={14} />
+            {submit.isPending ? 'Sending…' : 'Send to member for confirmation'}
+          </Button>
+          {!report.hasEvidence && (
+            <span className="cell-secondary">Upload proof of payment before sending.</span>
+          )}
+        </>
+      )}
+
+      {report.status === 'Disputed' && report.memberNote && (
+        <span className="muted" style={{ fontSize: 12 }}>
+          Member: “{report.memberNote}”
+        </span>
+      )}
+
+      {report.status === 'PendingMemberConfirmation' && (
+        <span className="cell-secondary" style={{ fontSize: 12 }}>
+          If the member does not respond, cancel this report and try another payment
+          method.
+        </span>
+      )}
+
+      <Button
+        size="sm"
+        variant="ghost"
+        disabled={cancel.isPending}
+        onClick={() => {
+          if (
+            window.confirm(
+              `Cancel this offline report for ${loan.memberDisplayName || 'the member'}? The loan returns to Approved and no disbursement is recorded.`,
+            )
+          ) {
+            cancel.mutate({ reportId: report.id, reason: 'Cancelled by Fund Originator' })
+          }
+        }}
+      >
+        <X size={14} /> {cancel.isPending ? 'Cancelling…' : 'Cancel report'}
+      </Button>
+
+      {submit.isError && (
+        <p className="form-error" style={{ margin: 0 }}>
+          {(submit.error as Error).message}
+        </p>
+      )}
+      {cancel.isError && (
+        <p className="form-error" style={{ margin: 0 }}>
+          {(cancel.error as Error).message}
+        </p>
+      )}
+    </div>
+  )
+}
+
 function DisburseButton({ loan, isOriginator }: { loan: Loan; isOriginator: boolean }) {
   const disburse = useDisburseLoan()
   const cancel = useGuarantorCancelLoan()
   const cancelDisbursement = useCancelDisbursement()
   const { data: disbursement, isLoading } = useGuarantorLoanDisbursement(loan.id)
+  const { data: offline, isLoading: loadingOffline } = useGuarantorOfflineDisbursement(loan.id)
+  const [showOfflineForm, setShowOfflineForm] = useState(false)
 
   function initiate() {
     const callbackUrl = `${window.location.origin}/guarantor/disburse`
@@ -100,11 +354,30 @@ function DisburseButton({ loan, isOriginator }: { loan: Loan; isOriginator: bool
     )
   }
 
-  if (isLoading) {
+  if (isLoading || loadingOffline) {
     return <span className="cell-secondary">…</span>
   }
 
+  const liveOffline = offline && offline.status !== 'Cancelled' ? offline : null
+
   if (!isOriginator) {
+    if (liveOffline) {
+      return (
+        <div style={cellStack}>
+          <div style={cellRow}>
+            <StatusBadge
+              status={liveOffline.status === 'Confirmed' ? 'Disbursed' : liveOffline.status}
+              withDot
+            />
+            <span className="cell-secondary">
+              {liveOffline.status === 'Confirmed'
+                ? 'Confirmed by the member (offline)'
+                : 'Offline payment reported by the Fund Originator'}
+            </span>
+          </div>
+        </div>
+      )
+    }
     if (loan.status === 'Approved' || loan.status === 'DisbursementPending') {
       return (
         <span className="cell-secondary">
@@ -113,6 +386,12 @@ function DisburseButton({ loan, isOriginator }: { loan: Loan; isOriginator: bool
       )
     }
     return <span className="cell-secondary">—</span>
+  }
+
+  // A live or confirmed offline report takes precedence over the provider path
+  // so a loan can never be double-disbursed (ADR-056).
+  if (liveOffline) {
+    return <OfflineReportPanel report={liveOffline} loan={loan} />
   }
 
   if (disbursement) {
@@ -220,6 +499,13 @@ function DisburseButton({ loan, isOriginator }: { loan: Loan; isOriginator: bool
         </Button>
         <Button
           size="sm"
+          variant="secondary"
+          onClick={() => setShowOfflineForm(true)}
+        >
+          <HandCoins size={14} /> Record offline payment
+        </Button>
+        <Button
+          size="sm"
           variant="ghost"
           disabled={cancel.isPending}
           onClick={() => {
@@ -236,6 +522,9 @@ function DisburseButton({ loan, isOriginator }: { loan: Loan; isOriginator: bool
         </Button>
       </div>
       {error && <p className="form-error" style={{ marginTop: 4 }}>{error.message}</p>}
+      {showOfflineForm && (
+        <OfflineReportForm loan={loan} onClose={() => setShowOfflineForm(false)} />
+      )}
     </div>
   )
 }
